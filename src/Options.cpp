@@ -134,7 +134,7 @@ bool Options::Parse(int argc, char** argv) {
 }
 
 static string
-OutputFilename(string& input) {
+OutputFilename(string input) {
   size_t dotIndex = input.rfind(".");
   if (dotIndex == string::npos) {
     // No extension? Just append ".indexed".
