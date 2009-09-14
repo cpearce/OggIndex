@@ -139,3 +139,34 @@ int ogg_index_is_loaded(ogg_index* index)
 {
   return index && index->num_packets == 3;
 }
+
+ogg_index_keypoint*
+ogg_index_get_seek_keypoint(ogg_index* index, ogg_int64_t target)
+{
+  int start = 0;
+  int end = 0;
+  
+  if (!index ||
+      !ogg_index_is_loaded(index) ||
+      target > index->end_time ||
+      target < index->start_time)
+  {
+    return 0;
+  }
+
+  /* Binary search to find the last key point with time less than target. */
+  end = index->num_key_points - 1;
+  while (end > start) {
+    int mid = (start + end + 1) >> 1;
+    if (index->key_points[mid].time == target) {
+       start = mid;
+       break;
+    } else if (index->key_points[mid].time < target) {
+      start = mid;
+    } else {
+      end = mid - 1;
+    }
+  }
+
+  return &index->key_points[start];
+}

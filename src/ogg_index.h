@@ -39,14 +39,12 @@
 #ifndef __ogg_index_h__
 #define __ogg_index_h__
 
-
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 
 #include <ogg/ogg.h>
-
 
 /**
  * Struct representing a "keypoint". A key point has an |offset|, |time| and
@@ -119,11 +117,20 @@ int ogg_index_decode(ogg_index* index, ogg_packet* packet);
  */
 ogg_int64_t ogg_index_seek_offset(ogg_index* index, ogg_int64_t time);
 
-
 /**
  * Returns 1 if index is loaded and ready to use, else 0.
  */
 int ogg_index_is_loaded(ogg_index* index);
+
+/**
+ * Returns a pointer to the index's key point which you should seek to in
+ * order to be before all keyframes required to decode everything required
+ * to render the media at 'target' milliseconds. Returns 0 if the index is
+ * not loaded, or if the target lies outside of the index's range. The memory
+ * returned is released in ogg_index_clear(), do not free it yourself.
+ */
+ogg_index_keypoint*
+ogg_index_get_seek_keypoint(ogg_index* index, ogg_int64_t target);
 
 #ifdef __cplusplus
 }
