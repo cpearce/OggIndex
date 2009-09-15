@@ -716,8 +716,9 @@ IsSorted(const vector<KeyFrameInfo>& K)
 
 class KeyFrameIterator {
 public:
-  KeyFrameIterator(vector<KeyFrameInfo>& frames)
+  KeyFrameIterator(vector<KeyFrameInfo>& frames, const char* type)
     : mFrames(frames),
+      mType(type),
       mIndex(0) {}
 
   KeyFrameIterator& operator=(const KeyFrameIterator& o) {
@@ -750,9 +751,14 @@ public:
     return mFrames[mIndex+1];
   }
   
+  const char* GetType() const {
+    return mType;
+  }
+
 private:
   vector<KeyFrameInfo>& mFrames;
   unsigned mIndex;
+  const char* mType;
 };
 
 // Merges all streams keyframe lists into a single keyframe list.
@@ -764,7 +770,7 @@ public:
     for (unsigned i=0; i<streams.size(); i++) {
       OggStream* stream = streams[i];
       if (stream->mKeyframes.size() != 0) {
-        mItrs.push_back(KeyFrameIterator(stream->mKeyframes));
+        mItrs.push_back(KeyFrameIterator(stream->mKeyframes, stream->TypeStr()));
       }
     }
   }
@@ -816,6 +822,7 @@ public:
     uint64 minOffset = UINT64_MAX;
     int64 minTime = INT64_MAX;
     unsigned checksum = 0;
+    vector<KeyFrameInfo> mergedFrames;
     for (unsigned i=0; i<mItrs.size(); i++) {
       KeyFrameIterator& itr = mItrs[i];
       assert(!itr.AtEnd());
@@ -833,7 +840,21 @@ public:
       }
       if (k.mTime < minTime) {
         minTime = k.mTime;
+      }  
+      if (gOptions.GetDumpMerge()) {
+        mergedFrames.push_back(k);
       }
+    }
+    
+    if (gOptions.GetDumpMerge()) {
+      cout << "MergedFrame @" << minOffset << " t=" << minTime
+           << " chk=" << checksum;
+      for (unsigned i=0; i<mergedFrames.size(); i++) {
+        KeyFrameInfo& k = mergedFrames[i];
+        cout << " ([" << mItrs[i].GetType() << "] o=" << k.mOffset << " t="
+             << k.mTime << " c=" << k.mChecksum << ")";
+      }
+      cout << endl;
     }
     
     // If any of the streams have reached their end, we can't find any more

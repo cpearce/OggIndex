@@ -47,6 +47,7 @@ Options::Options()
   : mDumpPackets(false)
   , mDumpKeyPackets(false)
   , mDumpPages(false)
+  , mDumpMerge(false)
   , mVerifyIndex(false)
   , mSerialNo(-1)
 {
@@ -93,13 +94,14 @@ void Options::PrintHelp() {
     << "Indexes an Ogg file to provide allow faster seeking." << endl
     << endl
     << "Usage:" << endl
-    << "  OggIndex [-v -d -p -s <serialno> -o <out filename>] <in filename>" << endl
+    << "  OggIndex [-v -d -p -m -s <serialno> -o <out filename>] <in filename>" << endl
     << endl
     << "Options:" << endl
     << "  -v             --  verify the index in the output file" << endl
     << "  -d             --  dump packet info to stdout" << endl
     << "  -k             --  dump only keyframe packet info to stdout" << endl
     << "  -p             --  dump page info to stdout" << endl
+    << "  -m             --  dump stream keyframe merge info to stdout" << endl
     << "  -s <serial>    --  use <serial> as the index's serialno" << endl
     << "  -o <filename>  --  use <filename> as the output filename" << endl
     << endl
@@ -116,7 +118,8 @@ IsArgument(const char* s) {
          strcmp(s, "-k") == 0 ||
          strcmp(s, "-p") == 0 ||
          strcmp(s, "-s") == 0 ||
-         strcmp(s, "-o") == 0;
+         strcmp(s, "-o") == 0 ||
+         strcmp(s, "-m") == 0;
 }
 
 static bool
@@ -173,6 +176,11 @@ bool Options::DoParse(int argc, char** argv) {
 
     if (strcmp(arg, "-p") == 0) {
       mDumpPages = true;
+      continue;
+    }
+
+    if (strcmp(arg, "-m") == 0) {
+      mDumpMerge = true;
       continue;
     }
 

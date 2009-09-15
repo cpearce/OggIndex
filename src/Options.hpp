@@ -57,6 +57,7 @@ public:
   string GetOutputFilename();
   bool GetDumpPackets();
   bool GetDumpKeyPackets() { return mDumpKeyPackets; }
+  bool GetDumpMerge() { return mDumpMerge; }
   bool GetDumpPages();
   bool GetVerifyIndex();
   int GetSerialNo();
@@ -70,6 +71,7 @@ private:
   bool mDumpPackets;
   bool mDumpKeyPackets;
   bool mDumpPages;
+  bool mDumpMerge;
   bool mVerifyIndex;
   string mInputFilename;
   string mOutputFilename;
