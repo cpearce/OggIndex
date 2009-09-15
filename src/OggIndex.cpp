@@ -817,10 +817,9 @@ public:
     }
     
     // Advance all streams' iterators to as close to maxTime as possible.
-    // Remember the minimum offset and time encountered in this set, it's our
-    // merged key frame.
+    // Remember the minimum offset encountered in this set, it's our
+    // merged key frame's page offset.
     uint64 minOffset = UINT64_MAX;
-    int64 minTime = INT64_MAX;
     unsigned checksum = 0;
     vector<KeyFrameInfo> mergedFrames;
     for (unsigned i=0; i<mItrs.size(); i++) {
@@ -838,16 +837,13 @@ public:
         minOffset = k.mOffset;
         checksum = k.mChecksum;
       }
-      if (k.mTime < minTime) {
-        minTime = k.mTime;
-      }  
       if (gOptions.GetDumpMerge()) {
         mergedFrames.push_back(k);
       }
     }
     
     if (gOptions.GetDumpMerge()) {
-      cout << "MergedFrame @" << minOffset << " t=" << minTime
+      cout << "MergedFrame @" << minOffset << " t=" << maxTime
            << " chk=" << checksum;
       for (unsigned i=0; i<mergedFrames.size(); i++) {
         KeyFrameInfo& k = mergedFrames[i];
@@ -866,7 +862,7 @@ public:
       }
     }
 
-    return KeyFrameInfo(minOffset, minTime, checksum);
+    return KeyFrameInfo(minOffset, maxTime, checksum);
   }
   
 private:
