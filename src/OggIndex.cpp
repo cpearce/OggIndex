@@ -38,6 +38,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <algorithm>
 #include <assert.h>
 #include <time.h>
 #include <map>
@@ -78,7 +79,7 @@ using namespace std;
 #define MIN_KEYFRAME_TIME_OFFSET 500
 
 
-static const int INDEX_HEADER_SIZE = 35;
+static const int INDEX_HEADER_SIZE = 31;
 
 static const unsigned char INDEX_VERSION = 0x01;
 
@@ -100,6 +101,26 @@ enum StreamType {
 
 // Command line parameter parser and global program options.
 Options gOptions;
+
+// Get the length in bytes of a file. 32bit only, won't work for files larger
+// than 2GB.
+static int64
+FileLength(const char* aFileName)
+{
+  ifstream is;
+  is.open (aFileName, ios::binary);
+  is.seekg (0, ios::end);
+  streampos length = is.tellg();
+  is.close();
+  return (int64)length;
+}
+
+static inline int64
+InputFileLength()
+{
+  return FileLength(gOptions.GetInputFilename().c_str());
+}
+
 
 class KeyFrameInfo {
 public:
@@ -415,7 +436,6 @@ LEUint32(unsigned const char* p) {
   return i;  
 }
 
-
 static unsigned
 GetChecksum(ogg_page* page)
 {
@@ -550,7 +570,10 @@ public:
       }
       #endif
 
-      mKeyframes.push_back(KeyFrameInfo(offset, frameTime, checksum));
+      if (IsAfterThreshold(offset, frameTime)) {
+        mKeyframes.push_back(KeyFrameInfo(offset, frameTime, checksum));
+        assert(IsKeyframeVectorSorted());
+      }
     }
 
     return true;
@@ -568,6 +591,29 @@ private:
   int64 mEndTime;
   bool mPacketSpanningPage;
   bool mGotStartTime;
+
+  // Returns true if the keyframe at offset/frameTime is enough after the
+  // previous keyframe for us to consider indexing it.
+  bool IsAfterThreshold(uint64 offset, int64 frameTime) { 
+    if (mKeyframes.size() == 0)
+      return true;
+    KeyFrameInfo& prev = mKeyframes.back();
+    return offset > (prev.mOffset + MIN_KEYFRAME_OFFSET) &&
+           frameTime > (prev.mTime + MIN_KEYFRAME_TIME_OFFSET);
+  }
+
+  bool IsKeyframeVectorSorted()
+  {
+    const vector<KeyFrameInfo>& K = mKeyframes;
+    for (unsigned i=1; i<K.size(); i++) {
+      if (K[i-1].mOffset >= K[i].mOffset ||
+          K[i-1].mTime >= K[i].mTime)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
 
   bool IsSkeletonHeader(ogg_packet* packet) {
     return strcmp((const char*)packet->packet, "fishead") == 0;
@@ -701,198 +747,6 @@ IsPageAtOffset(string& filename, int64 offset, ogg_page* page)
   return true;
 }
 
-static bool
-IsSorted(const vector<KeyFrameInfo>& K)
-{
-  for (unsigned i=1; i<K.size(); i++) {
-    if (K[i-1].mOffset >= K[i].mOffset ||
-        K[i-1].mTime >= K[i].mTime)
-    {
-      return false;
-    }
-  }
-  return true;
-}
-
-class KeyFrameIterator {
-public:
-  KeyFrameIterator(vector<KeyFrameInfo>& frames, const char* type)
-    : mFrames(frames),
-      mType(type),
-      mIndex(0) {}
-
-  KeyFrameIterator& operator=(const KeyFrameIterator& o) {
-    mFrames = o.mFrames;
-    mIndex = o.mIndex;
-    return *this;
-  }
-
-  bool AtEnd() const {
-    return mIndex == mFrames.size();
-  }
-  
-  const KeyFrameInfo& Get() const {
-    assert(!AtEnd());
-    return mFrames[mIndex];
-  }
-
-  bool Next() {
-    assert(!AtEnd());
-    mIndex++;
-    return AtEnd();
-  }
-  
-  bool HasNext() const {
-    return (mIndex + 1) < mFrames.size();
-  }
-  
-  const KeyFrameInfo& PeekNext() const {
-    assert(HasNext());
-    return mFrames[mIndex+1];
-  }
-  
-  const char* GetType() const {
-    return mType;
-  }
-
-private:
-  vector<KeyFrameInfo>& mFrames;
-  unsigned mIndex;
-  const char* mType;
-};
-
-// Merges all streams keyframe lists into a single keyframe list.
-class KeyFrameListMerger {
-public:
-  KeyFrameListMerger(const vector<OggStream*>& streams)
-    : mMaxKeyFrameOffset(0)
-  {
-    for (unsigned i=0; i<streams.size(); i++) {
-      OggStream* stream = streams[i];
-      if (stream->mKeyframes.size() != 0) {
-        mItrs.push_back(KeyFrameIterator(stream->mKeyframes, stream->TypeStr()));
-      }
-    }
-  }
-
-  ~KeyFrameListMerger() {
-  
-  }
-  
-  // Resumes our iteration over the keyframes, and returns the next merged
-  // keyframe. This is the first keyframe which all key frames are 
-  bool AtEnd() {
-    if (mItrs.size() == 0)
-      return true;
-    for (unsigned i=0; i<mItrs.size(); i++) {
-      if (mItrs[i].AtEnd()) {
-        return true;
-      }
-    }
-    return false;
-  }
-  
-  KeyFrameInfo Next() {
-    assert(!AtEnd());
-    
-    if (mItrs.size() == 1) {
-      // Only 1 stream, just returns its next keyframe.
-      KeyFrameInfo k = mItrs[0].Get();
-      mItrs[0].Next();
-      return k;
-    }
-    
-    // There are multiple streams, we need to merge them. Merge as follows:
-    // From each stream, take the next keyframe which is within the max keyframe offset.
-  
-    // Get the maximum time of every streams' iterators' next key frame.
-    int64 maxTime = INT64_MIN;
-    for (unsigned i=0; i<mItrs.size(); i++) {
-      KeyFrameIterator& itr = mItrs[i];
-      assert(!itr.AtEnd());
-      const KeyFrameInfo& k = itr.Get();
-      if (k.mTime > maxTime) {
-        maxTime = k.mTime;
-      }
-    }
-    
-    // Advance all streams' iterators to as close to maxTime as possible.
-    // Remember the minimum offset encountered in this set, it's our
-    // merged key frame's page offset.
-    uint64 minOffset = UINT64_MAX;
-    unsigned checksum = 0;
-    vector<KeyFrameInfo> mergedFrames;
-    for (unsigned i=0; i<mItrs.size(); i++) {
-      KeyFrameIterator& itr = mItrs[i];
-      assert(!itr.AtEnd());
-      KeyFrameInfo k = itr.Get();
-      while (!itr.AtEnd() &&
-             itr.Get().mTime <= maxTime)
-      {
-        k = itr.Get();
-        itr.Next();
-      }
-      assert(k.mTime <= maxTime);
-      if (k.mOffset < minOffset) {
-        minOffset = k.mOffset;
-        checksum = k.mChecksum;
-      }
-      if (gOptions.GetDumpMerge()) {
-        mergedFrames.push_back(k);
-      }
-    }
-    
-    if (gOptions.GetDumpMerge()) {
-      cout << "MergedFrame @" << minOffset << " t=" << maxTime
-           << " chk=" << checksum;
-      for (unsigned i=0; i<mergedFrames.size(); i++) {
-        KeyFrameInfo& k = mergedFrames[i];
-        cout << " ([" << mItrs[i].GetType() << "] o=" << k.mOffset << " t="
-             << k.mTime << " c=" << k.mChecksum << ")";
-      }
-      cout << endl;
-    }
-    
-    // If any of the streams have reached their end, we can't find any more
-    // keyframes to merge, so terminate.
-    for (unsigned i=0; i<mItrs.size(); i++) {
-      if (mItrs[i].AtEnd()) {
-        mItrs.clear();
-        break;
-      }
-    }
-
-    return KeyFrameInfo(minOffset, maxTime, checksum);
-  }
-  
-private:
-  // Vector of iterators over every streams' keyframe list.
-  vector<KeyFrameIterator> mItrs;
-  
-  // Maximum time that a keyframe in any stream can be offset, in ms.
-  int64 mMaxKeyFrameOffset;
-};
-
-
-static void
-GetKeyFrames(vector<KeyFrameInfo>& keyframes, vector<OggStream*>& streams)
-{
-  KeyFrameListMerger merger(streams);
-  uint64 prevOffset = UINT64_MIN;
-  int64 prevTime = UINT64_MIN;
-  while (!merger.AtEnd()) {
-    KeyFrameInfo k = merger.Next();
-    if (k.mOffset > (prevOffset + MIN_KEYFRAME_OFFSET) &&
-        k.mTime > (prevTime + MIN_KEYFRAME_TIME_OFFSET))
-    {
-      keyframes.push_back(k);
-      prevOffset = k.mOffset;
-      prevTime = k.mTime;
-    }
-  }
-}
-
-
 static int64
 GetMinStartTime(vector<OggStream*>& streams) 
 {
@@ -953,16 +807,51 @@ WriteLEUint32(unsigned char* p, const unsigned num)
   return p + 4;
 }
 
+// Compare function, used to sort index vector of packets.
+// returns true if a is before b.
+static bool
+compare_index_packet(ogg_packet* a, ogg_packet* b)
+{
+  long aSerial = LEUint32(a->packet);
+  long bSerial = LEUint32(b->packet);
+  return aSerial < bSerial;
+}
+
+static bool
+IsSorted(vector<ogg_packet*>& indexes)
+{
+  for (unsigned i=1; i<indexes.size(); i++) {
+    ogg_packet* prev = indexes[i-1];
+    ogg_packet* here = indexes[i];
+    long prevSerial = LEUint32(prev->packet);
+    long hereSerial = LEUint32(here->packet);
+    assert(prevSerial < hereSerial);
+    if (prevSerial >= hereSerial)
+      return false;
+  }
+  return true;
+}
 
 class IndexEncoder {
+private:
+
+  bool
+  IsIndexable(OggStream* stream) {
+    return stream->mType == TYPE_VORBIS ||
+           stream->mType == TYPE_THEORA;
+  }
+
 public:
   IndexEncoder(vector<OggStream*>& streams,
-               vector<KeyFrameInfo>& keyframes,
                int64 length)
-    : mStreams(streams),
-      mKeyframes(keyframes),
-      mFileLength(length)
+    : mFileLength(length),
+      mPacketCount(0)
   {
+    for (unsigned i=0; i<streams.size(); i++) {
+      if (IsIndexable(streams[i])) {
+        mStreams.push_back(streams[i]);
+      }
+    }
   }
   
   ~IndexEncoder() {
@@ -975,35 +864,37 @@ public:
                     unsigned& length)
   {
     ogg_packet* header = GetHeaderPacket();
-    ogg_packet* index = GetIndexPacket();
+    vector<ogg_packet*> indexes;
+    GetIndexPackets(indexes);
     
     ogg_packet* eos = new ogg_packet();
     memset(eos, 0, sizeof(ogg_packet));
     eos->e_o_s = 1;
-    eos->packetno = 2;
+    eos->packetno = mPacketCount;
 
     mSerial = GetUniqueSerialNo();
   
     // First, encode all the packets into pages, so we can determine the length
     // of the stream.
     unsigned len=0;
-    GetTrackData(0, len, mSerial, header, index, eos);
+    GetTrackData(0, len, mSerial, header, indexes, eos);
 
     // We know the length of the stream, we must add this to the offsets of
     // every known point's offset, else they'll be incorrect.
     assert(len != 0);
-    CorrectStreamLength(header, len);
-    CorrectIndexOffsets(index, len);
+    uint64 streamLength = CorrectStreamLength(header, len);
+    CorrectIndexOffsets(indexes, len, streamLength);
     
     // Write stream to buf.
     *track = new unsigned char[len];
-    GetTrackData(track, length, mSerial, header, index, eos);
+    GetTrackData(track, length, mSerial, header, indexes, eos);
     assert(length == len);
 
     delete header->packet;
     delete header;
-    delete index->packet;
-    delete index;
+    for (unsigned i=0; i<indexes.size(); i++) {
+      delete indexes[i]->packet;
+    }
     delete eos;
   }
   
@@ -1013,34 +904,46 @@ public:
   
 private:
 
-  vector<OggStream*>& mStreams;
-  vector<KeyFrameInfo>& mKeyframes;
+  vector<OggStream*> mStreams;
   int64 mFileLength;
   int mSerial;
+  int mPacketCount;
 
   void
-  CorrectIndexOffsets(ogg_packet* packet, uint64 headerLength)
+  CorrectIndexOffsets(vector<ogg_packet*>& indexes,
+                      uint64 headerLength,
+                      uint64 streamLength)
   {
-    unsigned char* p = packet->packet;
-    int n = packet->bytes / KEY_POINT_SIZE;
-    assert((packet->bytes % KEY_POINT_SIZE) == 0);
-    for (int i=0; i<n; i++) {
-      uint64 o = ReadLEUint64(p);
-      o += headerLength;
-      WriteLEUint64(p, o);
-      p += KEY_POINT_SIZE;
+    uint64 newFileLength = InputFileLength() + headerLength;
+    for (unsigned idx=0; idx<indexes.size(); idx++) {
+      ogg_packet* packet = indexes[idx];
+      assert(packet);
+      long serial = LEUint32(packet->packet);
+      int n = LEUint32(packet->packet+4);
+      unsigned char* p = packet->packet + 8;
+      assert(n == ((packet->bytes - 8) / KEY_POINT_SIZE));
+      assert(n >= 0);
+      for (int i=0; i<n; i++) {
+        assert(p < packet->packet + packet->bytes);
+        uint64 o = ReadLEUint64(p);
+        o += headerLength;
+        assert(o < streamLength);
+        assert(o < newFileLength);
+        WriteLEUint64(p, o);
+        p += KEY_POINT_SIZE;
+      }
     }
   }
 
-  void
+  uint64
   CorrectStreamLength(ogg_packet* packet, uint64 streamLength)
   {
     // [23-30] The length of the indexed segment, in bytes, uint64.
     unsigned char* p = packet->packet + 23;
     WriteLEUint64(p, mFileLength + streamLength);
     assert(ReadLEUint64(p) == mFileLength + streamLength);
+    return mFileLength + streamLength;
   }
-
 
   void
   CopyPage(unsigned char** buf, ogg_page& page, unsigned& offset)
@@ -1056,7 +959,7 @@ private:
                     unsigned& length,
                     int serialno,
                     ogg_packet* header,
-                    ogg_packet* index,
+                    vector<ogg_packet*>& indexes,
                     ogg_packet* eos)
   {
     int ret = 0;
@@ -1076,16 +979,18 @@ private:
     assert(ret != 0);
     CopyPage(track, page, length);
 
-    ret = ogg_stream_packetin(&state, index);
-    assert(ret == 0);
+    for (unsigned i=0; i<indexes.size(); i++) {
+      ret = ogg_stream_packetin(&state, indexes[i]);
+      assert(ret == 0);
 
-    while (ogg_stream_pageout(&state, &page) != 0) {
-      CopyPage(track, page, length);
-    }
+      while (ogg_stream_pageout(&state, &page) != 0) {
+        CopyPage(track, page, length);
+      }
 
-    ret = ogg_stream_flush(&state, &page);
-    if (ret != 0) {
-      CopyPage(track, page, length);
+      ret = ogg_stream_flush(&state, &page);
+      if (ret != 0) {
+        CopyPage(track, page, length);
+      }
     }
 
     ret = ogg_stream_packetin(&state, eos);
@@ -1131,35 +1036,53 @@ private:
     // [23-30] The length of the indexed segment, in bytes, uint64.
     p = WriteLEUint64(p, mFileLength);
 
-    // [31-35] The number of key points in the index, 'n', uint32.
-    p = WriteLEUint32(p, (unsigned)mKeyframes.size());
+    assert(packet->packetno == 0);
+    mPacketCount++;
+    assert(mPacketCount == 1);
 
     return packet;
   }
 
-  ogg_packet*
-  GetIndexPacket()
-  {  
-    ogg_packet* packet = new ogg_packet();
-    memset(packet, 0, sizeof(ogg_packet));
-    const int tableSize = (int)mKeyframes.size() * KEY_POINT_SIZE;
-    packet->bytes = tableSize;
-    unsigned char* p = new unsigned char[tableSize];
-    memset(p, 0, tableSize);
-    packet->packet = p;
+  void
+  GetIndexPackets(vector<ogg_packet*>& indexes)
+  {
+    assert(mPacketCount == 1);
+    for (unsigned i=0; i<mStreams.size(); i++) {
+      ogg_packet* packet = new ogg_packet();
+      memset(packet, 0, sizeof(ogg_packet));
+      
+      vector<KeyFrameInfo>& keyframes = mStreams[i]->mKeyframes;
+      
+      const int tableSize = 8 + (int)keyframes.size() * KEY_POINT_SIZE;
+      packet->bytes = tableSize;
+      unsigned char* p = new unsigned char[tableSize];
+      memset(p, 0, tableSize);
+      packet->packet = p;
 
-    for (unsigned i=0; i<mKeyframes.size(); i++) {
-      KeyFrameInfo& k = mKeyframes[i];
-      p = WriteLEUint64(p, k.mOffset);
-      p = WriteLEUint32(p, k.mChecksum);
-      p = WriteLEUint64(p, k.mTime);
+      // Stream serialno.
+      p = WriteLEUint32(p, mStreams[i]->mSerial);
+      
+      // Number of key points.
+      assert(keyframes.size() < UINT_MAX);
+      p = WriteLEUint32(p, (unsigned)keyframes.size());
+
+      for (unsigned i=0; i<keyframes.size(); i++) {
+        KeyFrameInfo& k = keyframes[i];
+        p = WriteLEUint64(p, k.mOffset);
+        p = WriteLEUint32(p, k.mChecksum);
+        p = WriteLEUint64(p, k.mTime);
+      }
+      
+      assert(p == packet->packet + tableSize);
+
+      packet->packetno = mPacketCount;
+      mPacketCount++;
+
+      assert(packet->e_o_s == 0);
+      indexes.push_back(packet);
     }
-
-    packet->packetno = 1;
-
-    assert(packet->e_o_s == 0);
-
-    return packet;
+    sort(indexes.begin(), indexes.end(), compare_index_packet);
+    assert(IsSorted(indexes));
   }
 
   int
@@ -1231,6 +1154,7 @@ bool VerifyIndex(int indexSerial) {
   
   string filename = gOptions.GetOutputFilename();
   ifstream input(filename.c_str(), ios::in | ios::binary);
+  int64 outputFileLength = FileLength(filename.c_str());
   ogg_sync_state state;
   int ret = ogg_sync_init(&state);
   assert(ret==0);
@@ -1249,8 +1173,7 @@ bool VerifyIndex(int indexSerial) {
   uint64 offset = 0;
   unsigned pageNumber = 0;
   int packetCount = 0;
-  const int numHeaderPackets = 3;
-  while (packetCount < numHeaderPackets && ReadPage(&state, &page, input, bytesRead)) {
+  while (!ogg_index_is_loaded(&index) && ReadPage(&state, &page, input, bytesRead)) {
     assert(IsPageAtOffset(filename, offset, &page));
     
     if (ogg_page_serialno(&page) == indexSerial) {
@@ -1274,65 +1197,78 @@ bool VerifyIndex(int indexSerial) {
             cerr << "Verification failure: ogg_index_decode() failure reading header packet." << endl;
             break;
           }
-        } else if (packetCount == 2) {
+        } else if (!packet.e_o_s) {
           // Index packet
           ret = ogg_index_decode(&index, &packet);
           if (ret != 0) {
             valid = false;
-            cerr << "Verification failure: ogg_index_decode() failure reading header-index packet." << endl;
-            break;
-          }
-        } else if (packetCount == 3) {
-          if (!packet.e_o_s) {
-            valid = false;
-            cerr << "Verification failure: packet 3 should be eos." << endl;
+            cerr << "Verification failure: ogg_index_decode() failure reading index packet." << endl;
             break;
           }
         } else {
-          cerr << "Verification failure: too many header packets." << endl;
-          valid = false;
+          assert(packet.e_o_s);
+          ret = ogg_index_decode(&index, &packet);
+          assert(ret == 1);
+          assert(ogg_index_is_loaded(&index));
+          break;
         }
-        assert(packetCount <= numHeaderPackets);
       }
     }
     
     unsigned length = page.body_len + page.header_len;
     offset += length;
     memset(&page, 0, sizeof(ogg_page));
-    
+  }
+  
+  if (!ogg_index_is_loaded(&index)) {
+    cerr << "Verification failure: Some problem reading pages." << endl;
   }
 
-  if (valid && packetCount == numHeaderPackets) {
-    for (unsigned i=0; valid && i<index.num_key_points; i++) {
-      ogg_sync_reset(&state);
-      memset(&page, 0, sizeof(ogg_page));
-      char* buf = ogg_sync_buffer(&state, 8*1024);
-      assert(buf);
-      if (index.key_points[i].offset > INT_MAX) {
-        cerr << "WARNING: Can only verified up to 2^31 bytes into the file." << endl;
-        break;
+  if (valid) {
+    for (unsigned s=0; s<index.num_streams; s++) {
+      ogg_stream_index* stream_index = &index.stream[s];
+      for (unsigned i=0; valid && i<stream_index->num_key_points; i++) {
+        ogg_sync_reset(&state);
+        memset(&page, 0, sizeof(ogg_page));
+        char* buf = ogg_sync_buffer(&state, 8*1024);
+        assert(buf);
+        ogg_index_keypoint* keypoint = &stream_index->key_points[i];
+        if (keypoint->offset > INT_MAX) {
+          cerr << "WARNING: Can only verified up to 2^31 bytes into the file." << endl;
+          break;
+        }
+        
+        if (keypoint->offset > outputFileLength) {
+          valid = false;
+          cerr << "Verification failure: keypoint offset out of file range." << endl;
+          break;
+        }
+        
+        input.seekg((std::streamoff)keypoint->offset);
+        int bytes = (int)min((int64)8*1024, (outputFileLength - keypoint->offset)); 
+        assert(bytes > 0);
+        input.read(buf, bytes);
+        int bytesToRead = input.gcount();
+        ret = ogg_sync_wrote(&state, bytesToRead);
+        if (ret != 0) {
+          valid = false;
+          cerr << "Verification failure: ogg_sync_wrote() failure reading data in verification." << endl;
+          break;
+        }
+        ret = ogg_sync_pageout(&state, &page);
+        if (ret != 1) {
+          valid = false;
+          cerr << "Verification failure: ogg_sync_pageout() failure reading data in verification." << endl;
+          break;
+        }
+        valid = (GetChecksum(&page) == keypoint->checksum);
+        if (!valid) {
+          cerr << "Verification failure: Incorrect checksum for page at offset "
+               << keypoint->offset << endl;
+          break;
+        }
       }
-      input.seekg((std::streamoff)index.key_points[i].offset);
-      input.read(buf, 8*1024);
-      int bytes = input.gcount();
-      ret = ogg_sync_wrote(&state, bytes);
-      if (ret != 0) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_wrote() failure reading data in verification." << endl;
-        break;
-      }
-      ret = ogg_sync_pageout(&state, &page);
-      if (ret != 1) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_pageout() failure reading data in verification." << endl;
-        break;
-      }
-      valid = (GetChecksum(&page) == index.key_points[i].checksum);
-      if (!valid) {
-        cerr << "Verification failure: Incorrect checksum for page at offset "
-             << index.key_points[i].offset << endl;
-        break;
-      }
+
     }
   }
 
@@ -1341,6 +1277,8 @@ bool VerifyIndex(int indexSerial) {
 
   return valid;
 }
+
+
 
 int main(int argc, char** argv) 
 {
@@ -1375,6 +1313,11 @@ int main(int argc, char** argv)
       ret = ogg_stream_init(&stream->mState, serial);
       assert(ret == 0);
       streams[serial] = stream;
+      if (stream->mType == TYPE_UNKNOWN) {
+        cerr << "FAIL: Unhandled content type in stream serialno="
+             << stream->mSerial << " aborting indexing!" << endl;
+        return -1;
+      }
     } else {
       if (insertionPoint == -1) {
         // First non bos page, we insert our index track here.
@@ -1403,14 +1346,14 @@ int main(int argc, char** argv)
   if (offset != fileLength) {
     cerr << "WARNING: Ogg page lengths don't sum to file length!" << endl;
   }
-
+  
+  assert(fileLength == InputFileLength());
+  
   ogg_sync_clear(&state);
   
   vector<OggStream*> sv = GetStreamVector(streams);
-  vector<KeyFrameInfo> keyframes;
-  GetKeyFrames(keyframes, sv);
-  
-  IndexEncoder encoder(sv, keyframes, fileLength);
+
+  IndexEncoder encoder(sv, fileLength);
   unsigned char* trackData = 0;
   unsigned trackLength = 0;
   encoder.GetTrackData(&trackData, trackLength);

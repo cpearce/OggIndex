@@ -68,6 +68,19 @@ typedef struct {
 
 } ogg_index_keypoint;
 
+typedef struct {
+  
+  /** The serialno for the stream this indexes. */
+  long serialno;
+
+  /** Number of key points in this index. */
+  unsigned num_key_points;
+  
+  /** Pointer to array of key points. */
+  ogg_index_keypoint* key_points;
+
+} ogg_stream_index;
+
 
 typedef struct {
   /** Start time of this ogg segment, in milliseconds. **/
@@ -78,15 +91,23 @@ typedef struct {
 
   /** Length of this segment in bytes. */
   ogg_int64_t segment_length;
+  
+  /** Array of stream indexes. */
+  ogg_stream_index* stream;
+  
+  /** Number of streams indexed in index array. This is the number of used
+   *  elements in the 'stream' array.
+   */
+  unsigned short num_streams;
+  
+  /** Number of elements allocated in the 'stream' array. */
+  unsigned sizeof_stream;  
 
-  /** Number of key points in this index. */
-  unsigned num_key_points;
-  
-  /** Pointer to array of key points. */
-  ogg_index_keypoint* key_points;
-  
   /** Number of packets read in on this stream. Used during parsing. */
   unsigned num_packets;
+
+  /** 1 if index is loaded, 0 otherwise. */
+  int loaded;
   
 } ogg_index;
 
@@ -107,15 +128,10 @@ int ogg_index_clear(ogg_index* index);
  * Decodes a packet from the index stream, building index.
  * Returns:
  * -1 - unexpected failure.
- * 0 - success, expecting more packets.
- * 1 - success, all packets read, index ready for use.
- **/
-int ogg_index_decode(ogg_index* index, ogg_packet* packet);
-
-/**
- * Gives the offset to seek to in the index segment to decode from time.
+ *  0 - success, expecting more packets.
+ *  1 - success, all packets read, index ready for use.
  */
-ogg_int64_t ogg_index_seek_offset(ogg_index* index, ogg_int64_t time);
+int ogg_index_decode(ogg_index* index, ogg_packet* packet);
 
 /**
  * Returns 1 if index is loaded and ready to use, else 0.
@@ -128,9 +144,13 @@ int ogg_index_is_loaded(ogg_index* index);
  * to render the media at 'target' milliseconds. Returns 0 if the index is
  * not loaded, or if the target lies outside of the index's range. The memory
  * returned is released in ogg_index_clear(), do not free it yourself.
+ * Returns 0 on failure, or if the target does not lie in the index, or if
+ * the stream is not indexed.
  */
-ogg_index_keypoint*
-ogg_index_get_seek_keypoint(ogg_index* index, ogg_int64_t target);
+const ogg_index_keypoint*
+ogg_index_get_seek_keypoint(ogg_index* index,
+                            long serialno,
+                            ogg_int64_t target);
 
 #ifdef __cplusplus
 }

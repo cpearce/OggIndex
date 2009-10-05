@@ -1,6 +1,6 @@
 Ogg Index Bitstream Format, version 1
 Chris Pearce, Mozilla Corporation
-22 September 2009
+5 October 2009
 
 
 OVERVIEW
@@ -15,125 +15,154 @@ necessarily stop at a keyframe, thus you can't simply resume playback
 from that point. First you need to construct the keyframe's timestamp 
 from the last page's granulepos, and seek again to the start of the 
 keyframe and decode forward until you reach the frame at the seek 
-target.
+target. 
 
 This is further complicated by the fact that packets often span multiple 
 Ogg pages, and that Ogg pages from different streams can be interleaved 
-between spanning packets.
+between spanning packets. 
 
 The bisection method above works fine for seeking in local files, but 
 for seeking in files served over the Internet via HTTP, each bisection 
 or non sequential read can trigger a new HTTP request, which can have 
-very high latency, making seeking very slow.
+very high latency, making seeking very slow. 
 
 
 SEEKING WITH AN INDEX
 
 The Ogg index bitstream attempts to alleviate this problem, by providing 
-an index of periodic keyframes in an Ogg file. The index is contained in 
-a separate track which is embedded in the Ogg file, so that players 
-which don't understand the index track can just ignore it. In streams 
-without the concept of a keyframe, such as Vorbis streams where each 
-sample is independent, the index can instead record the time position at 
-periodic intervals, which achieves the same result. When this document 
-refers to keyframes, it also refers to these independent periodic 
-samples from keyframe-less streams.
+an index of periodic keyframes for every content stream in an Ogg 
+segment. The indexes are all contained in an additional track which is 
+embedded in the Ogg file, so that players which don't understand the 
+index track can just ignore it. The index for streams without the 
+concept of a keyframe, such as Vorbis streams where each sample is 
+independent, can instead record the time position at periodic intervals, 
+which achieves the same result. When this document refers to keyframes, 
+it also refers to these independent periodic samples from keyframe-less 
+streams. 
 
-The Ogg index bitstream provides seek algorithms with an ordered table 
-of the Ogg page start-offsets and end-times of key points in the indexed 
-streams in an Ogg segment.
+The index track appears in the header packets of the Ogg segment. This 
+enables it to be immediately useful when playing the media over a 
+network connection. 
 
-A key point k is defined as follows. Each key point has an 8 byte offset 
-o, an 8 byte time t, and a 4 byte checksum c. This specifies that in 
-order to render the media at presentation time t milliseconds, the last 
-page which lies before the start of all the packets containing all the 
-key frames required to render at time t begins at offset o. The checksum 
-c is the checksum of the page which begins at offset o, which enables 
-you to verify that you're seeking to the intended page.
+For every content stream in an Ogg segment, the Ogg index bitstream 
+provides seek algorithms with an ordered table of "key points". A key 
+point is intrinsically associated with exactly one stream, and refers to 
+a page in that stream. A key point k is defined as follows. Each key 
+point has an 8 byte offset o, an 8 byte time t, and a 4 byte checksum c. 
+This specifies that in order to render the stream at presentation time t 
+milliseconds, the page which contains the start of the packet containing 
+the key frame required to render the stream at presentation time t 
+begins at byte offset o, as offset from the beginning of the Ogg 
+segment. The checksum c is the checksum of the page which begins at 
+offset o. This enables you to verify that you're seeking to the intended 
+page. The time t is the keyframe's presentation time corresponding to 
+the granulepos. That is, the presentation time as encoded by the 
+granulepos. 
 
-To seek in an Ogg bitstream which contains an index, you find the last 
-key point in the index with time less than or equal to the target time. 
-You then seek to the key point's offset, check that the page found there 
-has checksum c, and then decode forward until you encounter the sample 
-which corresponds to your seek target time. You are guaranteed to pass 
-keyframes on all indexed streams with time less than or equal to your 
-seek target time while decoding up to the seek target.
+The Ogg index track contains one index for each content stream in the 
+file. To seek in an Ogg file which contains an index track, find for 
+each stream the last key point with time less than or equal to the seek 
+target time. Then from that set of key points, find the key point with 
+the smallest byte offset. You then seek to that key point's offset, and 
+check that that page found there has a matching checksum. You can then 
+decode forward until you reach the seek target time. You are guaranteed 
+to pass keyframes on all streams with time less than or equal to your 
+seek target time while decoding up to the seek target. 
 
 Be aware that you cannot assume that any or all Ogg files will contain 
 an index, and so when implementing Ogg seeking, you must gracefully 
 fall-back to a bisection search or other seek algorithm when the index 
-is not present.
+is not present. 
 
-The index also only holds data for the segment in which it resides, i.e. 
-if two Ogg files are concatenated together ("chained"), the index track 
-in one Ogg segment does not contain information about the keyframes in 
-the other Ogg segment.
+ When using the index, you must verify that it is correct - always check 
+the key point checksum, and always check the version header field! Note 
+that if streams are added to a file, all the indexes' offsets will be 
+invalidated, and the index will need to be re-encoded. 
 
-The index also stores meta data about the segment in which it resides. 
-It stores the start time and the end time, and also the length of the 
-segment in bytes. This is so that if the seek target is outside of the 
-indexed range, you can immediately move to the next/previous segment and 
-either seek using that segment's index, or narrow the bisection window 
-if that segment has no index.
+The index track only holds data for the segment in which it resides, 
+i.e. if two Ogg files are concatenated together ("chained"), the index 
+track in one Ogg segment does not contain information about the 
+keyframes in the other Ogg segment. 
+
+The index header packet stores meta data about the segment in which it 
+resides. It stores the start time and the end time (as reported by the 
+streams' granulepos times). This also allows you to accurately determine 
+the duration of the indexed Ogg media in advance. The index header also 
+contains the length of the index segment in bytes. This is so that if 
+the seek target is outside of the indexed range, you can immediately 
+move to the next/previous segment and either seek using that segment's 
+index, or narrow the bisection window if that segment has no index. 
 
 
-FORMAT SPECIFICATION
+FORMAT SPECIFICATION 
 
 Unless otherwise specified, all integers and fields in the bitstream are 
 encoded with the least significant bit coming first in each byte. 
 Integers and fields comprising of more than one byte are encoded least 
-significant byte first (i.e. little endian byte order).
+significant byte first (i.e. little endian byte order). 
 
 An Ogg index track starts with an identifier header packet which 
-contains the following data, in the following order:
+contains the following data, in the following order: 
 
-* The identifier "index\0".
-* The index version format number, as a 1 byte unsigned integer. This 
-specification describes version 1, so this field should have the value 
-0x01.
-* The playback start time, in milliseconds, as an 8 byte unsigned 
-integer, this is the presentation time of the first frame.
-* The playback end time, in milliseconds, as an 8 byte unsigned integer, 
-this is the end time of the last frame.
-* The length of the indexed segment, in bytes, as an 8 byte unsigned 
-integer.
-* The number of key points in the index, 'n', as a 4 byte unsigned 
-integer.
+  * The identifier "index\0".
+  * The index version format number, as a 1 byte unsigned integer. This
+    specification describes version 1, so this field should have the
+    value 0x01.
+  * The playback start time, in milliseconds, as an 8 byte unsigned
+    integer, this is the presentation time of the first frame.
+  * The playback end time, in milliseconds, as an 8 byte unsigned
+    integer, this is the end time of the last frame.    
+  * The length of the indexed segment, in bytes, as an 8 byte unsigned
+    integer.
 
-The track then contains one secondary header packet, which contains the 
-actual index. This is the "index packet", and it must begin on a new 
-page, but it may span multiple pages. The index packet contains the 
-following:
+The track then contains secondary header packets, which contain the 
+actual indexes. These are the "index packets", and each must begin on a 
+new page, but they may span multiple pages. There is one index packet 
+for each content stream in the Ogg segment, and they appear in 
+increasing order of the streams' serialno. Each index packet contains 
+the following: 
 
-* 'n' key points, each of which contain, in the following order:
-  - the page offset as an 8 byte unsigned integer, followed by
-  - the checksum of the page found at the offset, as a 4 byte field, 
-    followed by
-  - the presentation times in milliseconds of the key point, as an 8 
-    byte unsigned integer.
- 
-The size of the data in the index packet is (n * (8 + 4 + 8)) bytes. The 
-key points are stored in increasing order by offset.
+  * The serialno of the stream as a 4 byte field.
+  * The number of key points in the index packet, 'n', as a 4 byte
+    unsigned integer.
+  
+  * 'n' key points, each of which contain, in the following order:
+    - the page's byte offset as an 8 byte unsigned integer, followed by
+    - the checksum of the page found at the offset, as a 4 byte field,
+      followed by
+    - the presentation times in milliseconds of the key point, as an 8
+      byte unsigned integer. 
 
-The track then contains one empty EOS packet, which must start on a new 
-page. The track therefore contains exactly three packets, on three or 
-more pages.
+The key points are stored in increasing order by offset. The 
+presentation time of the key point is calculated from the granulepos. 
+Note that an index packet may be larger than (8 + (n * (8 + 4 + 8)) 
+bytes, as it may have been preallocated during encoding, but not 
+completely filled. Do not make assumptions about the index packet's 
+size, always check that packet's 'bytes' field to determine its size. 
 
-The offsets stored in the keypoints is relative to the start of the Ogg 
-bitstream segment. So if you have a physical Ogg bitstream made up of 
-two chained Oggs, the offsets in the second Ogg segment's bitstream's 
-index are relative to the beginning of the second Ogg in the chain, not 
-the first. Also note that if a physical Ogg bitstream is made up of 
-chained Oggs, the presence of an index in one segment does not imply 
-that there will be an index in any other segment.
+The last packet in the track is an empty EOS packet, which must start on 
+a new page. 
+
+The byte offsets stored in the keypoints are relative to the start of 
+the Ogg bitstream segment. So if you have a physical Ogg bitstream made 
+up of two chained Oggs, the offsets in the second Ogg segment's 
+bitstream's index are relative to the beginning of the second Ogg in the 
+chain, not the first. Also note that if a physical Ogg bitstream is made 
+up of chained Oggs, the presence of an index in one segment does not 
+imply that there will be an index in any other segment. 
 
 The exact number of keyframes used to construct key points in the index 
 is up to the indexer, but to limit the index size, we recommend 
-including at most one key point per every 64KB of data, or every 500ms.
+including at most one key point per every 64KB of data, or every 500ms. 
 
 There can be only one index track per Ogg bitstream segment. The index 
 packet must occur before all non-metadata streams' content packets. In 
 practice this means that the index packet will occur along with other 
-secondary header pages, before the skeleton EOS page.
+secondary header pages, before the skeleton EOS page. 
 
-All pages in the index bitstream have their granulepos set as 0.
+All pages in the index bitstream have their granulepos set as 0. 
+
+If an indexer does not understand all content tracks in an Ogg file that 
+it's indexing, it must abort and not alter the file. Note that the 
+skeleton track is not a content track, and does not have an index 
+packet. 

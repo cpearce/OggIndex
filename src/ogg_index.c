@@ -39,8 +39,9 @@
 #include "ogg_index.h"
 #include <string.h>
 #include <stdlib.h>
+#include <assert.h>
 
-#define INDEX_HEADER_SIZE 35
+#define INDEX_HEADER_SIZE 31
 #define KEY_POINT_SIZE 20
 #define HEADER_MAGIC "index"
 #define HEADER_MAGIC_LEN (sizeof(HEADER_MAGIC) / sizeof(HEADER_MAGIC[0]))
@@ -56,8 +57,12 @@ int ogg_index_init(ogg_index* index)
 
 int ogg_index_clear(ogg_index* index)
 {
-  if (index && index->key_points) {
-    free(index->key_points);
+  if (index && index->stream) {
+    unsigned short i;
+    for (i=0; i<index->num_streams; i++) {
+      free(index->stream[i].key_points);
+    }
+    free(index->stream);
   }  
   return 0;
 }
@@ -81,18 +86,60 @@ LEInt64(const unsigned char* p, ogg_int64_t* n)
   return p;
 }
 
-int ogg_index_decode(ogg_index* index, ogg_packet* packet)
+static int
+ensure_index_capacity_increase(ogg_index* index, int size_increase)
 {
-  if (!index)
-    return -1;
-  index->num_packets++;
-  if (index->num_packets > 3) {
-    /* Should only have 3 packets, header, index, eos. */
+  size_t size = 0;
+  ogg_int64_t new_size = 0;
+  unsigned target_num_streams;
+  if (!index) {
     return -1;
   }
+  
+  target_num_streams = index->num_streams + size_increase;
+  if (target_num_streams < index->sizeof_stream) {
+    /* Enough memory to accomodate size increase. */
+    return 0;
+  }
+
+  /* Not enough memory in index->stream to accomodate size increase.
+   * Expand by 3/2 + 1. */
+  new_size = index->sizeof_stream;
+  while (new_size >= 0 && new_size < target_num_streams) {
+    new_size = (new_size * 3) / 2 + 1;
+  }
+  if (new_size < 0 ||
+      new_size > INT_MAX ||
+      new_size * sizeof(ogg_stream_index) > INT_MAX) {
+    /* Integer overflow or ridiculous index size. Fail. */
+    return -1;
+  }
+  size = (size_t)new_size * sizeof(ogg_stream_index);
+  index->stream = (ogg_stream_index*)realloc(index->stream, size);
+  if (!index->stream) {
+    return -1;
+  }
+  index->sizeof_stream = (unsigned)new_size;
+  return 0;
+}
+
+int ogg_index_decode(ogg_index* index, ogg_packet* packet)
+{
+  if (!index) {
+    return -1;
+  }
+
+  if (ogg_index_is_loaded(index)) {
+    /* Don't re-decode the index... */
+    return 0;
+  }
+
+  index->num_packets++;
   if (index->num_packets == 1) {
     /* Header packet. */
     const unsigned char* p = packet->packet;
+    int index_size = 0;
+    
     if (packet->bytes < INDEX_HEADER_SIZE) {
       return -1;
     }
@@ -104,69 +151,122 @@ int ogg_index_decode(ogg_index* index, ogg_packet* packet)
     p = LEInt64(p, &index->start_time);
     p = LEInt64(p, &index->end_time);
     p = LEInt64(p, &index->segment_length);
-    p = LEUint32(p, &index->num_key_points);
 
     return 0;
-  }
-  if (index->num_packets == 2) {
+  
+  } else if (!packet->e_o_s) {
     /* Index packet. */
-    unsigned i;
-    unsigned num_bytes = index->num_key_points * KEY_POINT_SIZE;
-    size_t size = index->num_key_points * sizeof(ogg_index_keypoint);
+    unsigned i = 0;
+    ogg_stream_index *stream_index = 0;
+    int expected_packet_size = 0;
+    unsigned actual_num_packets = 0;
+    long size = 0;
     const unsigned char* p = packet->packet;
-    if (packet->bytes != num_bytes) {
+    
+    if (ensure_index_capacity_increase(index, 1) == -1) {
       return -1;
     }
-    index->key_points = (ogg_index_keypoint*)malloc(size);
-    if (!index->key_points) {
+    
+    /* i is the index into index->stream array for the new stream. */
+    i = index->num_streams;
+    assert(i < index->sizeof_stream && i >= 0);
+    stream_index = &index->stream[i];
+    assert(stream_index);
+
+    /* Read serialno and num keypoints from packet. */
+    p = LEUint32(p, &stream_index->serialno);
+    p = LEUint32(p, &stream_index->num_key_points);
+
+    /* Check that the packet's not smaller or significantly larger than
+     * we expect. These cases denote a malicious or invalid num_key_points
+     * field. */
+    expected_packet_size = 8 + stream_index->num_key_points * KEY_POINT_SIZE;
+    actual_num_packets = (packet->bytes - 8) / KEY_POINT_SIZE;
+    assert(((packet->bytes - 8) % KEY_POINT_SIZE) == 0);
+    if (packet->bytes < expected_packet_size ||
+        stream_index->num_key_points > actual_num_packets) {
       return -1;
     }
-    for (i=0; i<index->num_key_points; i++) {
-      p = LEInt64(p, &index->key_points[i].offset);
-      p = LEUint32(p, &index->key_points[i].checksum);
-      p = LEInt64(p, &index->key_points[i].time);
+
+    /* Allocate for key points. */
+    size = stream_index->num_key_points * sizeof(ogg_index_keypoint);
+    stream_index->key_points = (ogg_index_keypoint*)malloc((size_t)size);
+    if (!stream_index->key_points) {
+      return -1;
     }
+    
+    /* Read in key points. */
+    assert(p == packet->packet + 8);
+    for (i=0; i<stream_index->num_key_points; i++) {
+      assert(p < packet->packet + packet->bytes);
+      p = LEInt64(p, &stream_index->key_points[i].offset);
+
+      assert(p < packet->packet + packet->bytes);
+      p = LEUint32(p, &stream_index->key_points[i].checksum);
+
+      assert(p < packet->packet + packet->bytes);
+      p = LEInt64(p, &stream_index->key_points[i].time);
+    }
+
+    /* Successfully added another stream to index. */
+    index->num_streams++;
     return 0;
   }
-  if (index->num_packets == 3) {
-    /* eos packet. */
-    return 1;
-  }
-  return -1;
+
+  /* Must be eos packet. */
+  assert(packet->e_o_s);
+  index->loaded = 1;
+  return 1;
 }
 
 int ogg_index_is_loaded(ogg_index* index)
 {
-  return index && index->num_packets == 3;
+  return (index && index->loaded == 1) ? 1 : 0;
 }
 
-ogg_index_keypoint*
-ogg_index_get_seek_keypoint(ogg_index* index, ogg_int64_t target)
+const ogg_index_keypoint*
+ogg_index_get_seek_keypoint(ogg_index* index,
+                            long serialno,
+                            ogg_int64_t target)
 {
   int start = 0;
   int end = 0;
+  int i = 0;
+  ogg_stream_index* stream_index = 0;
   
   if (!index ||
       !ogg_index_is_loaded(index) ||
+      !index->stream ||
       target > index->end_time ||
       target < index->start_time)
   {
     return 0;
   }
 
+  /* Find the stream index we must search in. */
+  for (i=0; i<index->num_streams; i++) {
+    if (index->stream[i].serialno == serialno) {
+      stream_index = &index->stream[i];
+      break;
+    }
+  }
+  if (!stream_index) {
+    return 0;
+  }
+
   /* Binary search to find the last key point with time less than target. */
-  end = index->num_key_points - 1;
+  end = stream_index->num_key_points - 1;
   while (end > start) {
     int mid = (start + end + 1) >> 1;
-    if (index->key_points[mid].time == target) {
+    if (stream_index->key_points[mid].time == target) {
        start = mid;
        break;
-    } else if (index->key_points[mid].time < target) {
+    } else if (stream_index->key_points[mid].time < target) {
       start = mid;
     } else {
       end = mid - 1;
     }
   }
 
-  return &index->key_points[start];
+  return &stream_index->key_points[start];
 }
