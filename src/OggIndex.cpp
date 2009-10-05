@@ -93,10 +93,11 @@ static const char HEADER_MAGIC[] = "index";
 static const int HEADER_MAGIC_LEN = sizeof(HEADER_MAGIC) / sizeof(HEADER_MAGIC[0]);
 
 enum StreamType {
+  TYPE_UNKNOWN,
   TYPE_VORBIS,
   TYPE_THEORA,
   TYPE_SKELETON,
-  TYPE_UNKNOWN
+  TYPE_UNSUPPORTED
 };
 
 // Command line parameter parser and global program options.
@@ -451,7 +452,7 @@ public:
   OggStream(long serial) :
     mSerial(serial),
     mPacketCount(0),
-    mType(TYPE_UNKNOWN),
+    mType(TYPE_UNSUPPORTED),
     mDecoder(0),
     mPacketSpanningPage(false),
     mSpanningPageOffset(0),
@@ -479,9 +480,9 @@ public:
   }
   
   int64 GranuleposToTime(int64 granulepos) {
-   return mDecoder ? mDecoder->GranuleposToTime(granulepos) : -1;
+    return mDecoder ? mDecoder->GranuleposToTime(granulepos) : -1;
   }
-   
+  
   bool Decode(ogg_page* page,
               int64 pageOffset)
   {
@@ -1301,7 +1302,6 @@ int main(int argc, char** argv)
   uint64 bytesRead = 0;
   uint64 offset = 0;
   unsigned pageNumber = 0;
-  bool gotAllHeaders = false;
   uint64 insertionPoint = -1;
   while (ReadPage(&state, &page, input, bytesRead)) {
     assert(IsPageAtOffset(filename, offset, &page));
@@ -1313,11 +1313,6 @@ int main(int argc, char** argv)
       ret = ogg_stream_init(&stream->mState, serial);
       assert(ret == 0);
       streams[serial] = stream;
-      if (stream->mType == TYPE_UNKNOWN) {
-        cerr << "FAIL: Unhandled content type in stream serialno="
-             << stream->mSerial << " aborting indexing!" << endl;
-        return -1;
-      }
     } else {
       if (insertionPoint == -1) {
         // First non bos page, we insert our index track here.
@@ -1333,6 +1328,12 @@ int main(int argc, char** argv)
            << " length=" << length << " granulepos=" << granulepos 
            << " time=" << stream->GranuleposToTime(granulepos) << "ms"
            << " s=" << serial << endl;
+    }
+
+    if (stream->mType == TYPE_UNKNOWN) {
+      cerr << "FAIL: Unhandled content type in stream serialno="
+           << stream->mSerial << " aborting indexing!" << endl;
+      return -1;
     }
 
     stream->Decode(&page, offset);
