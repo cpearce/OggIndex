@@ -149,7 +149,7 @@ int ogg_index_is_loaded(ogg_index* index);
  */
 const ogg_index_keypoint*
 ogg_index_get_seek_keypoint(ogg_index* index,
-                            long serialno,
+                            unsigned serialno,
                             ogg_int64_t target);
 
 #ifdef __cplusplus

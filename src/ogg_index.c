@@ -126,7 +126,7 @@ ensure_index_capacity_increase(ogg_index* index, int size_increase)
 
 int ogg_index_decode(ogg_index* index, ogg_packet* packet)
 {
-  if (!index) {
+  if (!index || !packet) {
     return -1;
   }
 
@@ -141,14 +141,14 @@ int ogg_index_decode(ogg_index* index, ogg_packet* packet)
     const unsigned char* p = packet->packet;
     int index_size = 0;
     
-    if (packet->bytes < INDEX_HEADER_SIZE) {
+    if (!p || packet->bytes < INDEX_HEADER_SIZE) {
       return -1;
     }
     if (memcmp(p, HEADER_MAGIC, HEADER_MAGIC_LEN) != 0 ||
-        p[6] != INDEX_VERSION) {
+        p[HEADER_MAGIC_LEN] != INDEX_VERSION) {
       return -1;
     }
-    p = packet->packet + 7;    
+    p = packet->packet + HEADER_MAGIC_LEN + 1;    
     p = LEInt64(p, &index->start_time);
     p = LEInt64(p, &index->end_time);
     p = LEInt64(p, &index->segment_length);
@@ -164,7 +164,7 @@ int ogg_index_decode(ogg_index* index, ogg_packet* packet)
     long size = 0;
     const unsigned char* p = packet->packet;
     
-    if (ensure_index_capacity_increase(index, 1) == -1) {
+    if (!p || ensure_index_capacity_increase(index, 1) == -1) {
       return -1;
     }
     
@@ -227,7 +227,7 @@ int ogg_index_is_loaded(ogg_index* index)
 
 const ogg_index_keypoint*
 ogg_index_get_seek_keypoint(ogg_index* index,
-                            long serialno,
+                            unsigned serialno,
                             ogg_int64_t target)
 {
   int start = 0;
