@@ -39,6 +39,7 @@
 #include "ogg_index.h"
 #include <string.h>
 #include <stdlib.h>
+#include <limits.h>
 #include <assert.h>
 
 #define INDEX_HEADER_SIZE 31

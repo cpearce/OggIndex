@@ -71,7 +71,7 @@ typedef struct {
 typedef struct {
   
   /** The serialno for the stream this indexes. */
-  long serialno;
+  unsigned serialno;
 
   /** Number of key points in this index. */
   unsigned num_key_points;
