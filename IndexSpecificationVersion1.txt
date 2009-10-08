@@ -130,7 +130,7 @@ the following:
     - the page's byte offset as an 8 byte unsigned integer, followed by
     - the checksum of the page found at the offset, as a 4 byte field,
       followed by
-    - the presentation times in milliseconds of the key point, as an 8
+    - the presentation time in milliseconds of the key point, as an 8
       byte unsigned integer. 
 
 The key points are stored in increasing order by offset. The 
