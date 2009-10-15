@@ -50,6 +50,7 @@ Options::Options()
   , mDumpMerge(false)
   , mVerifyIndex(false)
   , mSerialNo(-1)
+  , mKeyPointInterval(2000)
 {
 }
 
@@ -97,6 +98,7 @@ void Options::PrintHelp() {
     << "  OggIndex [-v -d -p -m -s <serialno> -o <out filename>] <in filename>" << endl
     << endl
     << "Options:" << endl
+    << "  -i <interval>  --  minimum <interval> in ms between keyframes (default 2000)" << endl
     << "  -v             --  verify the index in the output file" << endl
     << "  -d             --  dump packet info to stdout" << endl
     << "  -k             --  dump only keyframe packet info to stdout" << endl
@@ -119,7 +121,8 @@ IsArgument(const char* s) {
          strcmp(s, "-p") == 0 ||
          strcmp(s, "-s") == 0 ||
          strcmp(s, "-o") == 0 ||
-         strcmp(s, "-m") == 0;
+         strcmp(s, "-m") == 0 ||
+         strcmp(s, "-i") == 0;
 }
 
 static bool
@@ -202,6 +205,17 @@ bool Options::DoParse(int argc, char** argv) {
         return false;
       }
       mOutputFilename = argv[argIndex+1];
+      argIndex++;
+      continue;
+    }
+    
+    if (strcmp(arg, "-i") == 0) {
+      int interval = 0;
+      if (argIndex+1 == argc || IsArgument(argv[argIndex+1]) ||  (interval = atoi(argv[argIndex+1])) == 0) {
+        cerr << "ERROR: You must specify an integer interval in ms with '-i' argument" << endl;
+        return false;
+      }
+      mKeyPointInterval = interval;
       argIndex++;
       continue;
     }

@@ -61,6 +61,7 @@ public:
   bool GetDumpPages();
   bool GetVerifyIndex();
   int GetSerialNo();
+  int GetKeyPointInterval() { return mKeyPointInterval; }
 private:
 
   void PrintHelp();
@@ -76,6 +77,7 @@ private:
   string mInputFilename;
   string mOutputFilename;
   int mSerialNo;
+  int mKeyPointInterval;
 
 };
 

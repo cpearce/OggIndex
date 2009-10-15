@@ -76,9 +76,6 @@ using namespace std;
 // Need to index keyframe if we've not seen 1 in 64K.
 #define MIN_KEYFRAME_OFFSET (64 * 1024)
 
-#define MIN_KEYFRAME_TIME_OFFSET 500
-
-
 static const int INDEX_HEADER_SIZE = 31;
 
 static const unsigned char INDEX_VERSION = 0x01;
@@ -600,7 +597,7 @@ private:
       return true;
     KeyFrameInfo& prev = mKeyframes.back();
     return offset > (prev.mOffset + MIN_KEYFRAME_OFFSET) &&
-           frameTime > (prev.mTime + MIN_KEYFRAME_TIME_OFFSET);
+           frameTime > (prev.mTime + gOptions.GetKeyPointInterval());
   }
 
   bool IsKeyframeVectorSorted()
