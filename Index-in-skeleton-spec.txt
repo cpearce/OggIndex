@@ -1,0 +1,35 @@
+Index in Skeleton Spec.
+
+Skeleton header:
+
+1.  Identifier: 8 bytes, "fishead\0".
+2.  Version major: 2 Byte unsigned integer signifying the major (3)
+3.  Version minor: 2 Byte unsigned integer signifying the minor (1)
+4.  Presentationtime numerator: 8 Byte signed integer
+5.  Presentationtime denominator: 8 Byte signed integer
+6.  Basetime numerator: 8 Byte signed integer
+7.  Basetime denominator: 8 Byte signed integer
+8.  UTC [ISO8601]: a 20 Byte string containing a UTC time
+9.  [NEW] Start time, the presentation time in milliseconds of the
+    first sample in the media. 8 byte signed integer, -1 if unknown.
+    Note that samples between the Start time and the Presentationtime
+    are supposed to be skipped.
+10. [NEW] End time, the end time of the last sample in the media.
+    8 byte signed integer, -1 if unknown.
+11. [NEW] The length of the segment, in bytes: 8 byte signed integer,
+    -1 if unknown.
+
+Skeleton 'fisbone\0' packets unchanged, one per stream.
+
+[NEW] Skeleton index packets. There should be one per content stream:
+
+1. Identifier 6 bytes: "index\0"
+2. The serialno of the stream as a 4 byte field.
+3. The number of keypoints in the index packet, 'n' as a 4 byte
+   unsigned integer. This can be 0.
+4. 'n' key points, each of which contain, in the following order:
+    - the page's byte offset as an 8 byte unsigned integer, followed by
+    - the checksum of the page found at the offset, as a 4 byte field,
+      followed by
+    - the presentation time in milliseconds of the key point, as an 8
+      byte unsigned integer. 

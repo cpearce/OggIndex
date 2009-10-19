@@ -30,11 +30,14 @@
 */
 
 /*
- * Options.cpp - header for command line options parser.
+ * Options.hpp - header for command line options parser.
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
  */
+
+#ifndef __OPTIONS_HPP__
+#define __OPTIONS_HPP__
 
 #include <iostream>
 #include <map>
@@ -42,6 +45,7 @@
 using namespace std;
 
 #define VERSION "1.0-alpha"
+#include "ogg/os_types.h"
 
 
 class Options {
@@ -60,8 +64,7 @@ public:
   bool GetDumpMerge() { return mDumpMerge; }
   bool GetDumpPages();
   bool GetVerifyIndex();
-  int GetSerialNo();
-  int GetKeyPointInterval() { return mKeyPointInterval; }
+  ogg_int32_t GetKeyPointInterval() { return mKeyPointInterval; }
 private:
 
   void PrintHelp();
@@ -76,8 +79,14 @@ private:
   bool mVerifyIndex;
   string mInputFilename;
   string mOutputFilename;
-  int mSerialNo;
-  int mKeyPointInterval;
+  ogg_int32_t mKeyPointInterval;
 
 };
 
+// Command line parameter parser and global program options.
+// TODO: Just make all methods in Options static...
+extern Options gOptions;
+
+
+
+#endif

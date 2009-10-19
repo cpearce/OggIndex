@@ -43,13 +43,14 @@
 #include <stdlib.h>
 #include <string.h>
 
+Options gOptions;
+
 Options::Options()
   : mDumpPackets(false)
   , mDumpKeyPackets(false)
   , mDumpPages(false)
   , mDumpMerge(false)
   , mVerifyIndex(false)
-  , mSerialNo(-1)
   , mKeyPointInterval(2000)
 {
 }
@@ -76,10 +77,6 @@ bool Options::GetVerifyIndex() {
 #endif
 }
 
-int Options::GetSerialNo() {
-  return mSerialNo;
-}
-
 bool Options::GetDumpPackets() {
   return mDumpPackets;
 }
@@ -95,7 +92,7 @@ void Options::PrintHelp() {
     << "Indexes an Ogg file to provide allow faster seeking." << endl
     << endl
     << "Usage:" << endl
-    << "  OggIndex [-v -d -p -m -s <serialno> -o <out filename>] <in filename>" << endl
+    << "  OggIndex [-i <interval> -v -d -k -p -m -o <out filename>] <in filename>" << endl
     << endl
     << "Options:" << endl
     << "  -i <interval>  --  minimum <interval> in ms between keyframes (default 2000)" << endl
@@ -104,7 +101,6 @@ void Options::PrintHelp() {
     << "  -k             --  dump only keyframe packet info to stdout" << endl
     << "  -p             --  dump page info to stdout" << endl
     << "  -m             --  dump stream keyframe merge info to stdout" << endl
-    << "  -s <serial>    --  use <serial> as the index's serialno" << endl
     << "  -o <filename>  --  use <filename> as the output filename" << endl
     << endl
     << "If no output filename is specified, the indexed ogg file is written" << endl
@@ -119,7 +115,6 @@ IsArgument(const char* s) {
          strcmp(s, "-d") == 0 ||
          strcmp(s, "-k") == 0 ||
          strcmp(s, "-p") == 0 ||
-         strcmp(s, "-s") == 0 ||
          strcmp(s, "-o") == 0 ||
          strcmp(s, "-m") == 0 ||
          strcmp(s, "-i") == 0;
@@ -151,7 +146,7 @@ OutputFilename(string input) {
 
 bool Options::DoParse(int argc, char** argv) {
 
-  for (int argIndex=1; argIndex < argc; argIndex++) {
+  for (ogg_int32_t argIndex=1; argIndex < argc; argIndex++) {
     const char* arg = argv[argIndex];
 
     if (strcmp(arg, "-v") == 0) {
@@ -187,19 +182,7 @@ bool Options::DoParse(int argc, char** argv) {
       continue;
     }
 
-    if (strcmp(arg, "-s") == 0) {
-      int serial = 0;
-      if (argIndex+1 == argc || (serial = atoi(argv[argIndex+1])) == 0) {
-        cerr << "ERROR: You must specify an integer serialno with '-s' argument" << endl;
-        return false;
-      }
-      mSerialNo = serial;
-      argIndex++;
-      continue;
-    }
-
     if (strcmp(arg, "-o") == 0) {
-      int serial = 0;
       if (argIndex+1 == argc || IsArgument(argv[argIndex+1])) {
         cerr << "ERROR: You must specify an output filename with '-o' argument" << endl;
         return false;
@@ -210,7 +193,7 @@ bool Options::DoParse(int argc, char** argv) {
     }
     
     if (strcmp(arg, "-i") == 0) {
-      int interval = 0;
+      ogg_int32_t interval = 0;
       if (argIndex+1 == argc || IsArgument(argv[argIndex+1]) ||  (interval = atoi(argv[argIndex+1])) == 0) {
         cerr << "ERROR: You must specify an integer interval in ms with '-i' argument" << endl;
         return false;
