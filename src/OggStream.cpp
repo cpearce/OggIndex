@@ -39,6 +39,7 @@
 #include <assert.h>
 #include <iostream>
 #include <fstream>
+#include <string.h>
 #include <ogg/ogg.h>
 #include <theora/theora.h>
 #include <theora/theoradec.h>

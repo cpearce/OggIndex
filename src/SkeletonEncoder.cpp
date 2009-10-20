@@ -43,6 +43,8 @@
 #include <assert.h>
 #include <time.h>
 #include <stdlib.h>
+#include <limits.h>
+#include <string.h>
 #include "SkeletonEncoder.hpp"
 #include "Options.hpp"
 #include "Utils.h"

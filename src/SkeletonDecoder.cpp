@@ -37,6 +37,8 @@
  */
  
 #include <iostream>
+#include <string.h>
+#include <stdlib.h>
 #include "SkeletonDecoder.hpp"
 #include "OggIndex.h"
 #include "bytes_io.h"

@@ -39,14 +39,20 @@
 #ifndef __OGG_INDEX_H__
 #define __OGG_INDEX_H__
 
-// libogg doesn't define ogg_uint64_t on Windows yet...
-#if defined WIN32 && !defined __OGG_UINT64_T__
+#if !defined __OGG_UINT64_T__
+#if defined WIN32
 #define __OGG_UINT64_T__
 typedef unsigned __int64 ogg_uint64_t;
+#else
+#include <stdint.h>
+typedef uint64_t ogg_uint64_t;
+#endif
 #endif
 
-// Size of one key point entry in the index.
-// sizeof(ogg_int64_t) + sizeof(int32) + sizeof(ogg_int64_t)
+/* 
+ * Size of one key point entry in the index.
+ * sizeof(ogg_int64_t) + sizeof(int32) + sizeof(ogg_int64_t)
+ */
 #define KEY_POINT_SIZE 20
 
 #define HEADER_MAGIC "index"

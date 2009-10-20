@@ -40,12 +40,8 @@
 #define __BYTES_IO_H__
 
 #include <ogg/os_types.h>
+#include "OggIndex.h"
 
-// libogg doesn't define ogg_uint64_t on Windows yet...
-#if defined WIN32 && !defined __OGG_UINT64_T__
-#define __OGG_UINT64_T__
-typedef unsigned __int64 ogg_uint64_t;
-#endif
 
 #ifdef __cplusplus
 extern "C" {

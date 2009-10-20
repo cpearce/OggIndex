@@ -41,6 +41,7 @@
 #include <fstream>
 #include <iostream>
 #include <assert.h>
+#include <string.h>
 #include "Utils.h"
 #include "OggIndex.h"
 
