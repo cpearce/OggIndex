@@ -228,6 +228,14 @@
 				>
 			</File>
 			<File
+				RelativePath="..\..\src\FisboneInfo.hpp"
+				>
+			</File>
+			<File
+				RelativePath="..\..\src\KeyFrameInfo.hpp"
+				>
+			</File>
+			<File
 				RelativePath="..\..\src\OggIndex.h"
 				>
 			</File>

@@ -1,12 +1,62 @@
+/*
+   Copyright (C) 2009, Mozilla Foundation
+
+   Redistribution and use in source and binary forms, with or without
+   modification, are permitted provided that the following conditions
+   are met:
+
+   - Redistributions of source code must retain the above copyright
+   notice, this list of conditions and the following disclaimer.
+
+   - Redistributions in binary form must reproduce the above copyright
+   notice, this list of conditions and the following disclaimer in the
+   documentation and/or other materials provided with the distribution.
+
+   - Neither the name of the Mozilla Foundation nor the names of its
+   contributors may be used to endorse or promote products derived from
+   this software without specific prior written permission.
+
+   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+   ``AS IS'' AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A
+   PARTICULAR PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE ORGANISATION OR
+   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+*/
+
+/*
+ * SkeletonEncoder.cpp - Encodes skeleton track.
+ *
+ * Contributor(s): 
+ *   Chris Pearce <chris@pearce.org.nz>
+ */
+
+
 #include <fstream>
 #include <iostream>
 #include <algorithm>
 #include <assert.h>
+#include <time.h>
+#include <stdlib.h>
 #include "SkeletonEncoder.hpp"
 #include "Options.hpp"
 #include "Utils.h"
 
 using namespace std;
+
+
+#define SKELETON_3_0_HEADER_LENGTH 64
+#define SKELETON_3_1_HEADER_LENGTH 88
+#define FISBONE_3_1_PACKET_SIZE 80
+#define FISBONE_MAGIC "fisbone"
+#define FISBONE_MAGIC_LEN (sizeof(FISBONE_MAGIC) / sizeof(FISBONE_MAGIC[0]))
+#define FISBONE_SIZE 52
+#define FISBONE_MESSAGE_HEADER_OFFSET 44
 
 
 static bool
@@ -15,6 +65,27 @@ IsIndexable(OggStream* stream) {
          stream->mType == TYPE_THEORA;
 }
 
+static bool
+IsUniqueSerialno(ogg_uint32_t serialno, vector<OggStream*>& streams)
+{
+  for (unsigned i=0; i<streams.size(); i++) {
+    if (streams[i]->mSerial == serialno) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static ogg_uint32_t
+GetUniqueSerialNo(vector<OggStream*>& streams)
+{
+  ogg_uint32_t serialno;
+  srand((unsigned)time(0));
+  do {
+    serialno = rand();
+  } while (!IsUniqueSerialno(serialno, streams));
+  return serialno;
+}
 
 SkeletonEncoder::SkeletonEncoder(vector<OggStream*>& streams,
                                  ogg_int64_t fileLength,
@@ -32,7 +103,8 @@ SkeletonEncoder::SkeletonEncoder(vector<OggStream*>& streams,
       mSkeletonDecoder = (SkeletonDecoder*)streams[i]->mDecoder;
     }
   }
-  mSerial = mSkeletonDecoder->GetSerial();
+  mSerial = mSkeletonDecoder ? mSkeletonDecoder->GetSerial()
+                             : GetUniqueSerialNo(mStreams);
 }
 
 SkeletonEncoder::~SkeletonEncoder() {
@@ -47,7 +119,7 @@ SkeletonEncoder::~SkeletonEncoder() {
 static ogg_int64_t
 GetMinStartTime(vector<OggStream*>& streams) 
 {
-  ogg_int64_t m = INT64_MAX;
+  ogg_int64_t m = LLONG_MAX;
   for (ogg_uint32_t i=0; i<streams.size(); i++) {
     ogg_int64_t t = streams[i]->GetStartTime();
     if (t < m && t > -1) {
@@ -60,7 +132,7 @@ GetMinStartTime(vector<OggStream*>& streams)
 static ogg_int64_t
 GetMaxEndtime(vector<OggStream*>& streams)
 {
-  ogg_int64_t m = INT64_MIN;
+  ogg_int64_t m = LLONG_MIN;
   for (ogg_uint32_t i=0; i<streams.size(); i++) {
     ogg_int64_t t = streams[i]->GetEndTime();
     if (t > m && t > -1) {
@@ -91,6 +163,8 @@ SkeletonEncoder::AddBosPacket()
     memcpy(bos->packet, original->packet, SKELETON_3_0_HEADER_LENGTH);
   } else {
     // We need to construct the skeleton bos packet...
+    memcpy(bos->packet, "fishead", 8);
+    
     WriteLEUint64(bos->packet+20, 1000); // "prestime" denom.
     WriteLEUint64(bos->packet+36, 1000); // basetime denom.
   }
@@ -180,7 +254,8 @@ SkeletonEncoder::ConstructIndexPackets() {
     
     vector<KeyFrameInfo>& keyframes = mStreams[i]->mKeyframes;
     
-    const ogg_int32_t tableSize = HEADER_MAGIC_LEN + 4 + 4 + (int)keyframes.size() * KEY_POINT_SIZE;
+    const ogg_int32_t tableSize = HEADER_MAGIC_LEN + 4 + 4 +
+                                  (int)keyframes.size() * KEY_POINT_SIZE;
     packet->bytes = tableSize;
     unsigned char* p = new unsigned char[tableSize];
     memset(p, 0, tableSize);
@@ -355,6 +430,55 @@ SkeletonEncoder::AddFisbonePackets() {
       mPacketCount++;
     }
   } else {
-    // Have to construct fisbone packets. Damn.
+    // Have to construct fisbone packets.
+    for (ogg_uint32_t i=0; i<mStreams.size(); i++) {
+      ogg_packet* packet = new ogg_packet();
+      memset(packet, 0, sizeof(ogg_packet));
+      
+      packet->packet = new unsigned char[FISBONE_3_1_PACKET_SIZE];
+      memset(packet->packet, 0, FISBONE_3_1_PACKET_SIZE);
+
+      // Magic bytes identifier.
+      memcpy(packet->packet, FISBONE_MAGIC, FISBONE_MAGIC_LEN);
+      
+      // Offset of the message header fields.
+      WriteLEInt32(packet->packet+8, FISBONE_MESSAGE_HEADER_OFFSET);
+      
+      // Serialno of the stream.
+      WriteLEUint32(packet->packet+12, mStreams[i]->mSerial);
+      
+      // Number of header packets. 3 for both vorbis and theora.
+      WriteLEUint32(packet->packet+16, 3);
+      
+      FisboneInfo info = mStreams[i]->GetFisboneInfo();
+      
+      // Granulrate numerator.
+      WriteLEInt64(packet->packet+20, info.mGranNumer);
+      
+      // Granulrate denominator.
+      WriteLEInt64(packet->packet+28, info.mGranDenom);
+      
+      // Start granule.
+      WriteLEInt64(packet->packet+36, 0);
+      
+      // Preroll.
+      WriteLEUint32(packet->packet+44, info.mPreroll);
+      
+      // Granule shift.
+      WriteLEUint32(packet->packet+48, info.mGranuleShift);
+
+      // Message header field, Content-Type */
+      memcpy(packet->packet+FISBONE_SIZE,
+             info.mContentType.c_str(),
+             info.mContentType.size());
+
+      packet->b_o_s = 0;
+      packet->e_o_s = 0;
+      packet->bytes = 80;
+
+      packet->packetno = mPacketCount;      
+      mIndexPackets.push_back(packet);
+      mPacketCount++;
+    }        
   }
 }

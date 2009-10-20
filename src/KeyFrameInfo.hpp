@@ -30,65 +30,33 @@
 */
 
 /*
- * SkeletonEncoder.hpp - Encodes skeleton track.
+ * KeyFrameInfo.hpp - Stores a "key point".
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
  */
 
-#ifndef __SKELETON_ENCODER_HPP__
-#define __SKELETON_ENCODER_HPP__
+#ifndef __KEYFRAME_INFO_HPP__
+#define __KEYFRAME_INFO_HPP__
 
-#include "OggStream.hpp"
-#include "SkeletonDecoder.hpp"
+#include <ogg/os_types.h>
+#include "OggIndex.h"
 
-class SkeletonEncoder {
+class KeyFrameInfo {
 public:
-  SkeletonEncoder(vector<OggStream*>& streams,
-                  ogg_int64_t fileLength,
-                  ogg_int64_t oldSkeletonLength);
-  
-  ~SkeletonEncoder();
-  
-  // Write out the new skeleton BOS page.
-  void WriteBosPage(ofstream& output);
-  
-  // Writes out non-bos pages.
-  void WritePages(ofstream& output);
-  
-  ogg_uint32_t GetIndexSerial() {
-    return mSerial;
+  KeyFrameInfo() : mOffset(0), mTime(-1), mChecksum(0) {}
+
+  KeyFrameInfo(ogg_uint64_t offset, ogg_int64_t time, ogg_uint32_t checksum) :
+    mOffset(offset),
+    mTime(time),
+    mChecksum(checksum) {}
+  ogg_int64_t mOffset; // In bytes from beginning of file.
+  ogg_int64_t mTime; // In milliseconds.
+  ogg_uint32_t mChecksum;
+
+  bool operator<(const KeyFrameInfo& other) {
+    return other.mOffset < mOffset;
   }
-  
-  ogg_int64_t GetTrackLength();
-  
-  bool Encode();
-
-private:
-
-  vector<OggStream*> mStreams;
-  SkeletonDecoder* mSkeletonDecoder;
-  ogg_int64_t mFileLength;
-  ogg_int64_t mOldSkeletonLength;
-  ogg_uint32_t mSerial;
-  ogg_int32_t mPacketCount;
-  vector<ogg_packet*> mIndexPackets;
-  vector<ogg_page*> mIndexPages;
-
-  void ConstructIndexPackets();
-
-  void ConstructPages();
-
-  void AppendPage(ogg_page& page);
-
-  void ClearIndexPages();
-  void CorrectOffsets();
-
-  void AddBosPacket();
-  void AddEosPacket();
-  void AddFisbonePackets();
-  
-  bool HasFisbonePackets();
 };
 
 #endif

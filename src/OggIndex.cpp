@@ -52,7 +52,6 @@
 
 #include "OggIndex.h"
 #include "Options.hpp"
-#include "ogg_index.h"
 #include "Decoder.hpp"
 #include "SkeletonDecoder.hpp"
 #include "SkeletonEncoder.hpp"
@@ -60,6 +59,7 @@
 
 using namespace std;
 
+#define FILE_BUFFER_SIZE (1024 * 1024)
 
 // Returns nuber of bytes read.
 bool ReadPage(ogg_sync_state* state,
