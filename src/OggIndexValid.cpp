@@ -30,60 +30,37 @@
 */
 
 /*
- * SkeletonDecoder.hpp - Decodes skeleton track.
+ * OggIndexValid.cpp - ogg index validator main file.
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
  */
 
-#ifndef __SKELETON_DECODER_HPP__
-#define __SKELETON_DECODER_HPP__
+#include <iostream>
 
-#include <vector>
-#include <map>
-#include "bytes_io.h"
-#include "Decoder.hpp"
-#include "KeyFrameInfo.hpp"
+#include "OggIndex.h"
+#include "Utils.h"
 
-using namespace std;
 
-#define SKELETON_VERSION(major, minor) (((major)<<16)|(minor))
+static void
+PrintUsage() {
+  cout << "OggIndexValid " << VERSION << endl
+       << endl
+       << "Usage:" << endl
+       << "  OggIndexValid <in filename>" << endl
+       << endl;
+  
+}
 
-class SkeletonDecoder : public Decoder {
-public:
 
-  SkeletonDecoder(ogg_uint32_t serial);
-  virtual ~SkeletonDecoder() {}
-
-  virtual const char* TypeStr() { return "S"; }  
-
-  virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
+int main(int argc, char** argv) 
+{
+  if (argc != 2) {
+    PrintUsage();
     return -1;
   }
+  bool valid = VerifyIndex(string(argv[1]));
+  cout << "Index is " << (valid ? "" : "NOT ") << "valid" << endl;
+  return valid ? 0 : -1;
+}
 
-  virtual bool Decode(ogg_packet* packet,
-                      bool& isKeyFrame,
-                      ogg_int64_t& time)
-  {
-    return ReadHeader(packet);
-  }
-
-  virtual bool GotAllHeaders() {
-    return mGotAllHeaders;
-  } 
-
-  virtual bool ReadHeader(ogg_packet* packet);
-  vector<ogg_packet*> mPackets;
-
-  map<ogg_uint32_t, vector<KeyFrameInfo>*> mIndex;
-
-  virtual FisboneInfo GetFisboneInfo() { return FisboneInfo(); }
-
-private:
-  bool mGotAllHeaders;
-
-  bool DecodeIndex(ogg_packet* packet);
-  
-};
-
-#endif // __SKELETON_DECODER_HPP__

@@ -42,6 +42,7 @@
 
 
 #include <fstream>
+#include <ogg/ogg.h>
 #include "Options.hpp"
 
 ogg_page*
@@ -69,4 +70,25 @@ Clone(ogg_packet* p);
 
 bool
 IsIndexPacket(ogg_packet* packet);
+
+bool
+IsPageAtOffset(const string& filename, ogg_int64_t offset, ogg_page* page);
+
+void
+CopyFileData(istream& input, ostream& output, ogg_int64_t bytesToCopy);
+
+ogg_uint32_t
+GetChecksum(ogg_page* page);
+
+bool ReadPage(ogg_sync_state* state,
+              ogg_page* page,
+              istream& stream,
+              ogg_uint64_t& bytesRead);
+
+bool VerifyIndex(const string& filename);
+
+
+bool IsFisheadPacket(ogg_packet* packet);
+
 #endif
+

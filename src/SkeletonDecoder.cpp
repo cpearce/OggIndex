@@ -75,6 +75,7 @@ IsSkeletonPacket(ogg_packet* packet)
 
 bool SkeletonDecoder::DecodeIndex(ogg_packet* packet)
 {
+  
   assert(IsIndexPacket(packet));
   unsigned char* p = packet->packet + HEADER_MAGIC_LEN;
   ogg_uint32_t serialno = LEUint32(p);
@@ -90,6 +91,7 @@ bool SkeletonDecoder::DecodeIndex(ogg_packet* packet)
   assert(((packet->bytes - HEADER_MAGIC_LEN - 8) % KEY_POINT_SIZE) == 0);
   if (packet->bytes < expectedPacketSize ||
       numKeyPoints > actualNumPackets) {
+    cerr << "WARNING: Possibly malicious number of keyframes detected in index packet." << endl;
     return false;
   }
 
@@ -124,16 +126,6 @@ bool SkeletonDecoder::DecodeIndex(ogg_packet* packet)
   
   return true;
 }
-
-static bool
-IsFisheadPacket(ogg_packet* packet)
-{
-  return packet &&
-         packet->bytes > 8 &&
-         memcmp(packet->packet, "fishead", 8) == 0;
-}
-
-#define SKELETON_VERSION(major, minor) (((major)<<16)|(minor))
 
 bool SkeletonDecoder::ReadHeader(ogg_packet* packet)
 {

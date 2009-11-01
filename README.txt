@@ -6,7 +6,7 @@ BUILDING ON LINUX
 
 To build on Linux you require the ogg, theora and vorbis libraries to be 
 installed. Provided those libraries are installed, building should be as 
-simple as running "build.sh".
+simple as running "build-indexer.sh".
 
 BUILDING ON WINDOWS
 

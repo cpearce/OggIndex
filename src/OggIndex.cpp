@@ -59,212 +59,6 @@
 
 using namespace std;
 
-#define FILE_BUFFER_SIZE (1024 * 1024)
-
-// Returns nuber of bytes read.
-bool ReadPage(ogg_sync_state* state,
-              ogg_page* page,
-              istream& stream,
-              ogg_uint64_t& bytesRead)
-{
-  ogg_int32_t bytes = 0;
-  ogg_int32_t r = 0;
-  ogg_uint64_t intialBytesRead = bytesRead;
-  while ((r = ogg_sync_pageout(state, page)) != 1) {
-    char* buffer = ogg_sync_buffer(state, FILE_BUFFER_SIZE);
-    assert(buffer);
-
-    stream.read(buffer, FILE_BUFFER_SIZE);
-    bytes = stream.gcount();
-    bytesRead += bytes;
-    if (bytes == 0) {
-      // End of file
-      assert(stream.eof());
-      if (intialBytesRead != bytesRead) {
-        cerr << "WARNING: Reached end of file, when expecting to find more data! "
-             << "Page header may be incorrect!" << endl;
-      }
-      return false;
-    }
-
-    ogg_int32_t ret = ogg_sync_wrote(state, bytes);
-    assert(ret == 0);
-  }  
-  return true;
-}
-
-static bool
-IsPageAtOffset(string& filename, ogg_int64_t offset, ogg_page* page)
-{
-  ifstream file(filename.c_str(), ios::in | ios::binary);
-  assert(file);
-  file.seekg((ogg_int32_t)offset, ios_base::beg);
-  char* buf = new char[max(page->body_len, page->header_len)];
-  file.read(buf, page->header_len);
-  assert(file.gcount() == page->header_len);
-  if (memcmp(buf, page->header, page->header_len) != 0) {
-    cerr << "Incorrect page offset calculation for page at offset "
-         << offset << endl;
-    delete buf;
-    return false;
-  }
-  
-  file.read(buf, page->body_len);
-  assert(file.gcount() == page->body_len);
-  if (memcmp(buf, page->body, page->body_len) != 0) {
-    cerr << "Incorrect page offset calculation for page at offset "
-         << offset << endl;
-    delete buf;
-    return false;
-  }
-
-  delete buf;
-  return true;
-}
-
-
-
-
-
-static void
-CopyFileData(istream& input, ostream& output, ogg_int64_t bytesToCopy)
-{
-  assert(input.good());
-  assert(output.good());
-  // Copy data in chunks at most 1mb in size.
-  assert(bytesToCopy >= 0);
-  assert((ogg_int64_t)FILE_BUFFER_SIZE < (ogg_int64_t)INT_MAX);
-  ogg_int32_t len = (ogg_int32_t)min(bytesToCopy, (ogg_int64_t)FILE_BUFFER_SIZE);
-  char* buf = new char[len];
-  ogg_int64_t bytesCopied = 0;
-  while (bytesCopied != bytesToCopy) {
-    ogg_int64_t remaining = bytesToCopy - bytesCopied;
-    ogg_int32_t x = (ogg_int32_t)min(remaining, (ogg_int64_t)len);
-    input.read(buf, x);
-    assert(x == input.gcount());
-    output.write(buf, x);
-    bytesCopied += x;
-  }
-  delete buf;
-}
-
-
-static ogg_uint32_t
-GetChecksum(ogg_page* page)
-{
-  assert(page != 0);
-  assert(page->header != 0);
-  assert(page->header_len > 25);
-  return LEUint32(page->header + 22);
-}
-
-// Reads the index out of an indexed file, and checks that the offsets
-// line up with the pages they think they do, by checking the checksum.
-bool VerifyIndex(int indexSerial) {
-  bool valid = true;
-  
-  string filename = gOptions.GetOutputFilename();
-  ifstream input(filename.c_str(), ios::in | ios::binary);
-  ogg_int64_t outputFileLength = FileLength(filename.c_str());
-  ogg_sync_state state;
-  ogg_int32_t ret = ogg_sync_init(&state);
-  assert(ret==0);
-  
-  ogg_stream_state streamState;
-  ret = ogg_stream_init(&streamState, indexSerial);
-  assert(ret==0);
-
-  ogg_page page;
-  memset(&page, 0, sizeof(ogg_page));
-
-  ogg_uint64_t bytesRead = 0;
-  ogg_uint64_t offset = 0;
-  ogg_uint32_t pageNumber = 0;
-  ogg_int32_t packetCount = 0;
-  
-  OggStream skeleton(indexSerial);
- 
-  while (!skeleton.GotAllHeaders() &&
-         ReadPage(&state, &page, input, bytesRead))
-  {
-    assert(IsPageAtOffset(filename, offset, &page));
-    
-    if (ogg_page_serialno(&page) == indexSerial) {
-      if (!skeleton.Decode(&page, offset)) {
-        cerr << "Verification failure: Can't decode skeleton page at offset" << offset << endl;
-        return false;
-      }
-    }
-    
-    ogg_uint32_t length = page.body_len + page.header_len;
-    offset += length;
-    memset(&page, 0, sizeof(ogg_page));
-  }
-
-  if (skeleton.mType != TYPE_SKELETON) {
-    cerr << "Verification failure: First track isn't skeleton." << endl;
-    return false;
-  }
-  SkeletonDecoder* decoder = (SkeletonDecoder*)skeleton.mDecoder;
-  assert(decoder);
-
-  map<ogg_uint32_t, vector<KeyFrameInfo>*>::iterator itr = decoder->mIndex.begin();
-  while (valid && itr != decoder->mIndex.end()) {
-    vector<KeyFrameInfo>* v = itr->second;
-    itr++;
-    
-    for (ogg_uint32_t i=0; valid && i<v->size(); i++) {
-    
-      KeyFrameInfo& keypoint = v->at(i);
-    
-      ogg_sync_reset(&state);
-      memset(&page, 0, sizeof(ogg_page));
-      char* buf = ogg_sync_buffer(&state, 8*1024);
-      assert(buf);
-
-      if (keypoint.mOffset > INT_MAX) {
-        cerr << "WARNING: Can only verified up to 2^31 bytes into the file." << endl;
-        break;
-      }
-      
-      if (keypoint.mOffset > outputFileLength) {
-        valid = false;
-        cerr << "Verification failure: keypoint offset out of file range." << endl;
-        break;
-      }
-      
-      input.seekg((std::streamoff)keypoint.mOffset);
-      ogg_int32_t bytes = (ogg_int32_t)min((ogg_int64_t)8*1024, (outputFileLength - keypoint.mOffset)); 
-      assert(bytes > 0);
-      input.read(buf, bytes);
-      ogg_int32_t bytesToRead = input.gcount();
-      ret = ogg_sync_wrote(&state, bytesToRead);
-      if (ret != 0) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_wrote() failure reading data in verification." << endl;
-        break;
-      }
-      ret = ogg_sync_pageout(&state, &page);
-      if (ret != 1) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_pageout() failure reading data in verification." << endl;
-        break;
-      }
-      valid = (GetChecksum(&page) == keypoint.mChecksum);
-      if (!valid) {
-        cerr << "Verification failure: Incorrect checksum for page at offset "
-             << keypoint.mOffset << endl;
-        break;
-      }
-    }
-
-  }
-
-  ogg_stream_clear(&streamState);
-  ogg_sync_clear(&state);
-
-  return valid;
-}
 
 int main(int argc, char** argv) 
 {
@@ -327,8 +121,8 @@ int main(int argc, char** argv)
       if (stream->mType == TYPE_SKELETON) {
         oldSkeletonLength += length;
       } else {
-        // Record all packets except skeleton. We'll just rewrite the skeleton,
-        // and the skeleton decoder will remember its packets.
+        // Record all header pages except skeleton. We'll just rewrite the
+        // skeleton, and the skeleton decoder will remember its packets.
         headerPages.push_back(Clone(&page));
       }
       if (gotAllHeaders) {
@@ -400,7 +194,7 @@ int main(int argc, char** argv)
   input.close();
 
   if (gOptions.GetVerifyIndex()) {
-    if (!VerifyIndex(encoder.GetIndexSerial())) {
+    if (!VerifyIndex(gOptions.GetOutputFilename())) {
       cerr << "FAIL: Verification of the index failed!" << endl;
     } else {
       cout << "SUCCESS: index passes verification." << endl;

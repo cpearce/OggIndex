@@ -53,6 +53,7 @@ class OggStream
 {
 public:
   OggStream(ogg_uint32_t serial);
+  OggStream() : mDecoder(0) {}
   ~OggStream();
   
   ogg_uint32_t mSerial;
