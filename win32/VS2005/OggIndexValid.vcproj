@@ -2,11 +2,10 @@
 <VisualStudioProject
 	ProjectType="Visual C++"
 	Version="8.00"
-	Name="OggIndex"
-	ProjectGUID="{FF29B847-A994-4B9E-B5AE-E57163E8414C}"
-	RootNamespace="OggIndex"
+	Name="OggIndexValid"
+	ProjectGUID="{FE8A12DC-A0C3-4572-B439-D7ED82A60178}"
+	RootNamespace="OggIndexValid"
 	Keyword="Win32Proj"
-	AssemblyReferenceSearchPaths="&quot;.\win32\debug&quot;"
 	>
 	<Platforms>
 		<Platform
@@ -19,7 +18,7 @@
 		<Configuration
 			Name="Debug|Win32"
 			OutputDirectory="$(SolutionDir)$(ConfigurationName)"
-			IntermediateDirectory="$(ConfigurationName)\intermediate"
+			IntermediateDirectory="$(ConfigurationName)"
 			ConfigurationType="1"
 			CharacterSet="1"
 			>
@@ -45,7 +44,7 @@
 				PreprocessorDefinitions="WIN32;_DEBUG;_CONSOLE"
 				MinimalRebuild="true"
 				BasicRuntimeChecks="3"
-				RuntimeLibrary="1"
+				RuntimeLibrary="3"
 				UsePrecompiledHeader="0"
 				WarningLevel="3"
 				Detect64BitPortabilityProblems="true"
@@ -141,7 +140,7 @@
 				AdditionalDependencies="libogg_static.lib libtheora_static.lib libvorbis_static.lib"
 				LinkIncremental="1"
 				AdditionalLibraryDirectories="$(OutDir);$(SolutionDir)\$(PlatformName)\$(ConfigurationName)"
-				GenerateDebugInformation="false"
+				GenerateDebugInformation="true"
 				SubSystem="1"
 				OptimizeReferences="2"
 				EnableCOMDATFolding="2"
@@ -186,7 +185,7 @@
 				>
 			</File>
 			<File
-				RelativePath="..\..\src\OggIndex.cpp"
+				RelativePath="..\..\src\OggIndexValid.cpp"
 				>
 			</File>
 			<File

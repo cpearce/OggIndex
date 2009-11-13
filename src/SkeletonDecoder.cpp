@@ -54,13 +54,7 @@ SkeletonDecoder::SkeletonDecoder(ogg_uint32_t serial) :
     mPackets[i]->packet = 0;
     delete mPackets[i];
   }
-  map<ogg_uint32_t, vector<KeyFrameInfo>*>::iterator itr = mIndex.begin();
-  while (itr != mIndex.end()) {
-    vector<KeyFrameInfo>* v = itr->second;
-    delete v;
-    itr++;
-  }
-  mIndex.clear();
+  ClearKeyframeIndex(mIndex);
 }
 
 static bool
@@ -74,57 +68,8 @@ IsSkeletonPacket(ogg_packet* packet)
 }
 
 bool SkeletonDecoder::DecodeIndex(ogg_packet* packet)
-{
-  
-  assert(IsIndexPacket(packet));
-  unsigned char* p = packet->packet + HEADER_MAGIC_LEN;
-  ogg_uint32_t serialno = LEUint32(p);
-  p += 4;
-  ogg_int32_t numKeyPoints = LEUint32(p);
-  p += 4;
-
-  // Check that the packet's not smaller or significantly larger than
-  // we expect. These cases denote a malicious or invalid num_key_points
-  // field.
-  ogg_int32_t expectedPacketSize = HEADER_MAGIC_LEN + 8 + numKeyPoints * KEY_POINT_SIZE;
-  ogg_int32_t actualNumPackets = (packet->bytes - HEADER_MAGIC_LEN - 8) / KEY_POINT_SIZE;
-  assert(((packet->bytes - HEADER_MAGIC_LEN - 8) % KEY_POINT_SIZE) == 0);
-  if (packet->bytes < expectedPacketSize ||
-      numKeyPoints > actualNumPackets) {
-    cerr << "WARNING: Possibly malicious number of keyframes detected in index packet." << endl;
-    return false;
-  }
-
-  vector<KeyFrameInfo>* keypoints = new vector<KeyFrameInfo>();
-  keypoints->reserve(numKeyPoints);
-    
-  /* Read in key points. */
-  assert(p == packet->packet + 14);
-  for (ogg_int32_t i=0; i<numKeyPoints; i++) {
-    assert(p < packet->packet + packet->bytes);
-    ogg_uint64_t offset=0;
-    ogg_uint32_t checksum=0;
-    ogg_uint64_t time=0;
-    
-    offset = LEInt64(p);
-    p += 8;
-
-    assert(p < packet->packet + packet->bytes);
-    checksum = LEUint32(p);
-    p += 4;
-
-    assert(p < packet->packet + packet->bytes);
-    time = LEInt64(p);
-    p += 8;
-    
-    keypoints->push_back(KeyFrameInfo(offset, time, checksum));
-  }
-  
-  mIndex[serialno] = keypoints;
-  
-  assert(mIndex[serialno] == keypoints);
-  
-  return true;
+{ 
+  return ::DecodeIndex(mIndex, packet);
 }
 
 bool SkeletonDecoder::ReadHeader(ogg_packet* packet)

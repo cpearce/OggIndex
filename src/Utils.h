@@ -43,7 +43,9 @@
 
 #include <fstream>
 #include <ogg/ogg.h>
+#include <theora/codec.h>
 #include "Options.hpp"
+#include "KeyFrameInfo.hpp"
 
 ogg_page*
 Clone(ogg_page* p);
@@ -89,6 +91,15 @@ bool VerifyIndex(const string& filename);
 
 
 bool IsFisheadPacket(ogg_packet* packet);
+
+bool IsFisbonePacket(ogg_packet* packet);
+
+bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet);
+
+int TheoraVersion(th_info* info,
+                  unsigned char maj,
+                  unsigned char min,
+                  unsigned char sub);
 
 #endif
 

@@ -39,8 +39,12 @@
 #ifndef __KEYFRAME_INFO_HPP__
 #define __KEYFRAME_INFO_HPP__
 
+#include <map>
+#include <vector>
 #include <ogg/os_types.h>
 #include "OggIndex.h"
+
+using namespace std;
 
 class KeyFrameInfo {
 public:
@@ -58,5 +62,9 @@ public:
     return other.mOffset < mOffset;
   }
 };
+
+typedef map<ogg_uint32_t, vector<KeyFrameInfo>*> KeyFrameIndex;
+
+void ClearKeyframeIndex(KeyFrameIndex& index);
 
 #endif

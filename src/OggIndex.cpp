@@ -59,6 +59,8 @@
 
 using namespace std;
 
+bool ValidateIndexedOgg(const string& filename);
+
 
 int main(int argc, char** argv) 
 {
@@ -92,7 +94,7 @@ int main(int argc, char** argv)
   // We store all non-skeleton header pages in the order in which we read them,
   // so that we can rewrite them easily.
   vector<ogg_page*> headerPages;
-  
+
   while (ReadPage(&state, &page, input, bytesRead)) {
     assert(IsPageAtOffset(filename, offset, &page));
     pageNumber++;
@@ -194,7 +196,7 @@ int main(int argc, char** argv)
   input.close();
 
   if (gOptions.GetVerifyIndex()) {
-    if (!VerifyIndex(gOptions.GetOutputFilename())) {
+    if (!ValidateIndexedOgg(gOptions.GetOutputFilename())) {
       cerr << "FAIL: Verification of the index failed!" << endl;
     } else {
       cout << "SUCCESS: index passes verification." << endl;

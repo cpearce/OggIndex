@@ -1,5 +1,7 @@
 Index in Skeleton Spec.
 
+Where a time is represented in milliseconds, any fractional part is assumed to be rounded down.
+
 Skeleton header:
 
 1.  Identifier: 8 bytes, "fishead\0".

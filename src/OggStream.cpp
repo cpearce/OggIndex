@@ -291,15 +291,18 @@ public:
     double seconds = th_granule_time(mCtx, granulepos);
     double frameRate = (double)(mInfo.fps_numerator) / (double)(mInfo.fps_denominator);
     ogg_int64_t frameDuration = (1000 * mInfo.fps_denominator) / mInfo.fps_numerator;
-    time = (ogg_int64_t)(seconds * 1000);
+    time = (ogg_int64_t)(seconds * 1000) - frameDuration;
     if (!mGotStartTime) {
       mGotStartTime = true;
       mStartTime = time;
       assert(mStartTime >= 0);
     }
-    mEndTime = time;
+    mEndTime = time + frameDuration;
     isKeyFrame = th_packet_iskeyframe(packet) == 1;
     mPacketCount++;
+    if (packet->granulepos != -1) {
+      assert(packet->granulepos == granulepos);
+    }
     return true;
   }
 

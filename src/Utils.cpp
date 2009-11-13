@@ -105,6 +105,68 @@ Clone(ogg_packet* p)
   return q;
 }
 
+
+bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
+ assert(IsIndexPacket(packet));
+  unsigned char* p = packet->packet + HEADER_MAGIC_LEN;
+  ogg_uint32_t serialno = LEUint32(p);
+  p += 4;
+  ogg_int32_t numKeyPoints = LEUint32(p);
+  p += 4;
+
+  // Check that the packet's not smaller or significantly larger than
+  // we expect. These cases denote a malicious or invalid num_key_points
+  // field.
+  ogg_int32_t expectedPacketSize = HEADER_MAGIC_LEN + 8 + numKeyPoints * KEY_POINT_SIZE;
+  ogg_int32_t actualNumPackets = (packet->bytes - HEADER_MAGIC_LEN - 8) / KEY_POINT_SIZE;
+  assert(((packet->bytes - HEADER_MAGIC_LEN - 8) % KEY_POINT_SIZE) == 0);
+  if (packet->bytes < expectedPacketSize ||
+      numKeyPoints > actualNumPackets) {
+    cerr << "WARNING: Possibly malicious number of keyframes detected in index packet." << endl;
+    return false;
+  }
+
+  vector<KeyFrameInfo>* keypoints = new vector<KeyFrameInfo>();
+  keypoints->reserve(numKeyPoints);
+    
+  /* Read in key points. */
+  assert(p == packet->packet + 14);
+  for (ogg_int32_t i=0; i<numKeyPoints; i++) {
+    assert(p < packet->packet + packet->bytes);
+    ogg_uint64_t offset=0;
+    ogg_uint32_t checksum=0;
+    ogg_uint64_t time=0;
+    
+    offset = LEInt64(p);
+    p += 8;
+
+    assert(p < packet->packet + packet->bytes);
+    checksum = LEUint32(p);
+    p += 4;
+
+    assert(p < packet->packet + packet->bytes);
+    time = LEInt64(p);
+    p += 8;
+    
+    keypoints->push_back(KeyFrameInfo(offset, time, checksum));
+  }
+  
+  index[serialno] = keypoints;
+  
+  assert(index[serialno] == keypoints);
+  
+  return true;
+}
+
+void ClearKeyframeIndex(KeyFrameIndex& index) {
+  KeyFrameIndex::iterator itr = index.begin();
+  while (itr != index.end()) {
+    vector<KeyFrameInfo>* v = itr->second;
+    delete v;
+    itr++;
+  }
+  index.clear();
+}
 bool
 IsIndexPacket(ogg_packet* packet)
 {
@@ -203,7 +265,6 @@ CopyFileData(istream& input, ostream& output, ogg_int64_t bytesToCopy)
   delete buf;
 }
 
-
 ogg_uint32_t
 GetChecksum(ogg_page* page)
 {
@@ -213,168 +274,31 @@ GetChecksum(ogg_page* page)
   return LEUint32(page->header + 22);
 }
 
-
-// Reads the index out of an indexed file, and checks that the offsets
-// line up with the pages they think they do, by checking the checksum.
-bool VerifyIndex(const string& filename) {
-  bool valid = true;
-  
-  ifstream input(filename.c_str(), ios::in | ios::binary);
-  ogg_int64_t outputFileLength = FileLength(filename.c_str());
-  ogg_sync_state state;
-  ogg_int32_t ret = ogg_sync_init(&state);
-  assert(ret==0);
-  
-  ogg_page page;
-  memset(&page, 0, sizeof(ogg_page));
-
-  ogg_uint64_t bytesRead = 0;
-  ogg_uint64_t offset = 0;
-  ogg_uint32_t pageNumber = 0;
-  ogg_int32_t packetCount = 0;
-  ogg_uint32_t skeletonSerial = 0;
-  bool firstPage = true;
-  
-  OggStream skeleton;
- 
-  memset(&page, 0, sizeof(ogg_page));
-
-  while (!skeleton.GotAllHeaders() &&
-         ReadPage(&state, &page, input, bytesRead))
-  {
-    assert(IsPageAtOffset(filename, offset, &page));
-    if (firstPage) {
-      firstPage = false;
-      skeletonSerial = ogg_page_serialno(&page);
-      skeleton = OggStream(skeletonSerial);
-    }
-    if (ogg_page_serialno(&page) == skeletonSerial) {
-      if (!skeleton.Decode(&page, offset)) {
-        cerr << "Verification failure: Can't decode skeleton page at offset" << offset << endl;
-        return false;
-      }
-    }
-    
-    ogg_uint32_t length = page.body_len + page.header_len;
-    offset += length;
-    memset(&page, 0, sizeof(ogg_page));
-  }
-
-  if (skeleton.mType != TYPE_SKELETON) {
-    cerr << "Verification failure: First track isn't skeleton." << endl;
-    return false;
-  }
-  SkeletonDecoder* decoder = (SkeletonDecoder*)skeleton.mDecoder;
-  assert(decoder);
-
-  // Check if the skeleton version is 3.0+, fail otherwise.
-  ogg_packet* bosPacket = decoder->mPackets.front();
-  if (!IsFisheadPacket(bosPacket)) {
-    cerr << "Verification Failure: First packet isn't skeleton BOS packet." << endl;
-    return false;
-  }
-
-  ogg_uint16_t ver_maj = LEUint16(bosPacket->packet + 8);
-  ogg_uint16_t ver_min = LEUint16(bosPacket->packet + 10);
-  ogg_uint32_t version = SKELETON_VERSION(ver_maj, ver_min);
-  if (version < SKELETON_VERSION(3,1)) {
-    cerr << "Verification Failure: skeleton version ("<< ver_maj <<"." << ver_min << ") is < 3.1." << endl;
-    return false;
-  }
-
-  // Decode the 3.1 header fields, for validation later.
-  // TODO: How can I validate these further?
-  ogg_int64_t start_time = LEUint64(bosPacket->packet+64);
-  ogg_int64_t end_time = LEUint64(bosPacket->packet+72);
-
-  if (end_time <= start_time) {
-    cerr << "Verification Failure: end_time (" << end_time << ") <= start_time (" << start_time << ")." << endl;
-    return false;
-  }
-
-  ogg_int64_t length_bytes = LEUint64(bosPacket->packet+80);
-  ogg_int64_t actual_file_length = FileLength(filename.c_str());
-  if (length_bytes != actual_file_length) {
-    cerr << "Verification Failure: index's reported file length (" << length_bytes
-         << ") doesn't match actual file length (" << actual_file_length << ")." << endl;
-    return false;
-  }
-
-  map<ogg_uint32_t, vector<KeyFrameInfo>*>::iterator itr = decoder->mIndex.begin();
-  if (itr == decoder->mIndex.end()) {
-    cerr << "WARNING: No tracks in skeleton index." << endl;
-    return false;
-  }
-
-  while (valid && itr != decoder->mIndex.end()) {
-    vector<KeyFrameInfo>* v = itr->second;
-    ogg_uint32_t serialno = itr->first;
-    itr++;
-
-    if (v->size() == 0) {
-      cerr << "WARNING: Index for track s=" << serialno << " has no keyframes" << endl;
-    }
-    
-    cout << "Index for track s=" << serialno << endl;
-
-    for (ogg_uint32_t i=0; valid && i<v->size(); i++) {
-    
-      KeyFrameInfo& keypoint = v->at(i);
-    
-      ogg_sync_reset(&state);
-      memset(&page, 0, sizeof(ogg_page));
-      char* buf = ogg_sync_buffer(&state, 8*1024);
-      assert(buf);
-
-      if (keypoint.mOffset > INT_MAX) {
-        cerr << "WARNING: Can only verified up to 2^31 bytes into the file." << endl;
-        break;
-      }
-      
-      if (keypoint.mOffset > outputFileLength) {
-        valid = false;
-        cerr << "Verification failure: keypoint offset out of file range." << endl;
-        break;
-      }
-      
-      input.seekg((std::streamoff)keypoint.mOffset);
-      ogg_int32_t bytes = (ogg_int32_t)min((ogg_int64_t)8*1024, (outputFileLength - keypoint.mOffset)); 
-      assert(bytes > 0);
-      input.read(buf, bytes);
-      ogg_int32_t bytesToRead = input.gcount();
-      ret = ogg_sync_wrote(&state, bytesToRead);
-      if (ret != 0) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_wrote() failure reading data in verification." << endl;
-        break;
-      }
-      ret = ogg_sync_pageout(&state, &page);
-      if (ret != 1) {
-        valid = false;
-        cerr << "Verification failure: ogg_sync_pageout() failure reading data in verification." << endl;
-        break;
-      }
-      valid = (GetChecksum(&page) == keypoint.mChecksum);
-      if (!valid) {
-        cerr << "Verification failure: Incorrect checksum for page at offset "
-             << keypoint.mOffset << endl;
-        break;
-      }
-      cout << "Valid page o=" << keypoint.mOffset << " c=" << keypoint.mChecksum << " t=" << keypoint.mTime << endl;
-    }
-    memset(&page, 0, sizeof(ogg_page));
-  }
-
-  ogg_sync_clear(&state);
-
-  return valid;
-}
-
-
 bool
 IsFisheadPacket(ogg_packet* packet)
 {
   return packet &&
          packet->bytes > 8 &&
          memcmp(packet->packet, "fishead", 8) == 0;
+}
+
+bool
+IsFisbonePacket(ogg_packet* packet)
+{
+  return packet &&
+         packet->bytes > 8 &&
+         memcmp(packet->packet, "fisbone", 8) == 0;
+}
+
+// Theora version 
+int TheoraVersion(th_info* info,
+                  unsigned char maj,
+                  unsigned char min,
+                  unsigned char sub)
+{
+  ogg_uint32_t ver = (maj << 16) + (min << 8) + sub;
+  ogg_uint32_t th_ver = (info->version_major << 16) +
+                        (info->version_minor << 8) +
+                        info->version_major;
+  return (th_ver >= ver) ? 1 : 0;
 }

@@ -52,6 +52,7 @@ PrintUsage() {
   
 }
 
+bool ValidateIndexedOgg(const string& filename);
 
 int main(int argc, char** argv) 
 {
@@ -59,7 +60,7 @@ int main(int argc, char** argv)
     PrintUsage();
     return -1;
   }
-  bool valid = VerifyIndex(string(argv[1]));
+  bool valid = ValidateIndexedOgg(string(argv[1]));
   cout << "Index is " << (valid ? "" : "NOT ") << "valid" << endl;
   return valid ? 0 : -1;
 }
