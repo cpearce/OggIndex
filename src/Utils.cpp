@@ -43,11 +43,7 @@
 #include <assert.h>
 #include <string.h>
 #include <limits.h>
-#include "OggIndex.h"
-#include "Utils.h"
-#include "bytes_io.h"
-#include "SkeletonDecoder.hpp"
-#include "OggStream.hpp"
+#include "Utils.hpp"
 
 ogg_page*
 Clone(ogg_page* p)
@@ -105,68 +101,6 @@ Clone(ogg_packet* p)
   return q;
 }
 
-
-bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
- assert(IsIndexPacket(packet));
-  unsigned char* p = packet->packet + HEADER_MAGIC_LEN;
-  ogg_uint32_t serialno = LEUint32(p);
-  p += 4;
-  ogg_int32_t numKeyPoints = LEUint32(p);
-  p += 4;
-
-  // Check that the packet's not smaller or significantly larger than
-  // we expect. These cases denote a malicious or invalid num_key_points
-  // field.
-  ogg_int32_t expectedPacketSize = HEADER_MAGIC_LEN + 8 + numKeyPoints * KEY_POINT_SIZE;
-  ogg_int32_t actualNumPackets = (packet->bytes - HEADER_MAGIC_LEN - 8) / KEY_POINT_SIZE;
-  assert(((packet->bytes - HEADER_MAGIC_LEN - 8) % KEY_POINT_SIZE) == 0);
-  if (packet->bytes < expectedPacketSize ||
-      numKeyPoints > actualNumPackets) {
-    cerr << "WARNING: Possibly malicious number of keyframes detected in index packet." << endl;
-    return false;
-  }
-
-  vector<KeyFrameInfo>* keypoints = new vector<KeyFrameInfo>();
-  keypoints->reserve(numKeyPoints);
-    
-  /* Read in key points. */
-  assert(p == packet->packet + 14);
-  for (ogg_int32_t i=0; i<numKeyPoints; i++) {
-    assert(p < packet->packet + packet->bytes);
-    ogg_uint64_t offset=0;
-    ogg_uint32_t checksum=0;
-    ogg_uint64_t time=0;
-    
-    offset = LEInt64(p);
-    p += 8;
-
-    assert(p < packet->packet + packet->bytes);
-    checksum = LEUint32(p);
-    p += 4;
-
-    assert(p < packet->packet + packet->bytes);
-    time = LEInt64(p);
-    p += 8;
-    
-    keypoints->push_back(KeyFrameInfo(offset, time, checksum));
-  }
-  
-  index[serialno] = keypoints;
-  
-  assert(index[serialno] == keypoints);
-  
-  return true;
-}
-
-void ClearKeyframeIndex(KeyFrameIndex& index) {
-  KeyFrameIndex::iterator itr = index.begin();
-  while (itr != index.end()) {
-    vector<KeyFrameInfo>* v = itr->second;
-    delete v;
-    itr++;
-  }
-  index.clear();
-}
 bool
 IsIndexPacket(ogg_packet* packet)
 {
@@ -299,6 +233,116 @@ int TheoraVersion(th_info* info,
   ogg_uint32_t ver = (maj << 16) + (min << 8) + sub;
   ogg_uint32_t th_ver = (info->version_major << 16) +
                         (info->version_minor << 8) +
-                        info->version_major;
+                        info->version_subminor;
   return (th_ver >= ver) ? 1 : 0;
+}
+
+
+
+unsigned char*
+WriteLEUint64(unsigned char* p, const ogg_uint64_t num)
+{
+  ogg_int32_t i;
+  ogg_uint64_t n = num;
+  assert(p);
+  for (i=0; i<8; i++) {
+    p[i] = (unsigned char)(n & 0xff);
+    n >>= 8;
+  }
+  assert(LEUint64(p) == num);
+  return p + 8;
+}
+
+unsigned char*
+WriteLEInt64(unsigned char* p, const ogg_int64_t num)
+{
+  ogg_int64_t n = num;
+  ogg_int32_t i;
+  assert(p);
+  for (i=0; i<8; i++) {
+    p[i] = (unsigned char)(n & 0xff);
+    n >>= 8;
+  }
+  assert(LEInt64(p) == num);
+  return p + 8;
+}
+
+unsigned char*
+WriteLEUint32(unsigned char* p, const ogg_uint32_t num)
+{
+  ogg_uint32_t n = num;
+  ogg_int32_t i;
+  assert(p);
+  for (i=0; i<4; i++) {
+    p[i] = (unsigned char)(n & 0xff);
+    n >>= 8;
+  }
+  assert(LEUint32(p) == num);
+  return p + 4;
+}
+
+unsigned char*
+WriteLEInt32(unsigned char* p, const ogg_int32_t num)
+{
+  ogg_int32_t n = num;
+  ogg_int32_t i;
+  assert(p);
+  for (i=0; i<4; i++) {
+    p[i] = (unsigned char)(n & 0xff);
+    n >>= 8;
+  }
+  assert(LEInt32(p) == num);
+  return p + 4;
+}
+
+unsigned char*
+WriteLEUint16(unsigned char* p, const ogg_uint16_t num)
+{
+  ogg_uint16_t n = num;
+  assert(p);
+  p[0] = (unsigned char)(n & 0xff);
+  p[1] = (unsigned char)((n >> 8) & 0xff);
+  assert(LEUint16(p) == num);
+  return p + 2;
+}
+
+ogg_uint64_t
+LEUint64(unsigned char* p)
+{
+  ogg_uint64_t lo = LEUint32(p);
+  ogg_uint64_t hi = LEUint32(p+4);
+  return lo + (hi << 32);
+}
+
+ogg_int64_t
+LEInt64(unsigned char* p)
+{
+  ogg_int64_t lo = LEUint32(p);
+  ogg_int64_t hi = LEInt32(p+4);
+  return lo + (hi << 32);
+};
+
+ogg_uint32_t
+LEUint32(unsigned const char* p) {
+  ogg_uint32_t i =  p[0] +
+                   (p[1] << 8) + 
+                   (p[2] << 16) +
+                   (p[3] << 24);
+  return i;  
+}
+
+static ogg_int32_t
+LEInt32(unsigned const char* p) {
+  ogg_int32_t i =  p[0] +
+             (p[1] << 8) + 
+             (p[2] << 16) +
+             (p[3] << 24);
+  return i;  
+}
+
+ogg_uint16_t
+LEUint16(unsigned const char* p) {
+  ogg_uint16_t i =  p[0] +
+                   (p[1] << 8);
+  return i;  
 }

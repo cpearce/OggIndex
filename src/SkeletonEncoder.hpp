@@ -39,12 +39,11 @@
 #ifndef __SKELETON_ENCODER_HPP__
 #define __SKELETON_ENCODER_HPP__
 
-#include "OggStream.hpp"
-#include "SkeletonDecoder.hpp"
+#include "Decoder.hpp"
 
 class SkeletonEncoder {
 public:
-  SkeletonEncoder(vector<OggStream*>& streams,
+  SkeletonEncoder(DecoderMap& decoders,
                   ogg_int64_t fileLength,
                   ogg_int64_t oldSkeletonLength);
   
@@ -66,7 +65,7 @@ public:
 
 private:
 
-  vector<OggStream*> mStreams;
+  vector<Decoder*> mDecoders;
   SkeletonDecoder* mSkeletonDecoder;
   ogg_int64_t mFileLength;
   ogg_int64_t mOldSkeletonLength;

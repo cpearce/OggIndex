@@ -30,7 +30,7 @@
 */
 
 /*
- * Decoder.hpp - Abstract class for an OggStream's decoder.
+ * Decoder.hpp - Classes for decoding ogg streams for indexing.
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
@@ -39,43 +39,163 @@
 #ifndef __DECODER_HPP__
 #define __DECODER_HPP__
 
+#include <string>
+#include <map>
+#include <vector>
 #include <ogg/ogg.h>
-#include "FisboneInfo.hpp"
 
-class Decoder {
+using namespace std;
+
+// Size of one key point entry in the index.
+// sizeof(ogg_int64_t) + sizeof(int32) + sizeof(ogg_int64_t)
+#define KEY_POINT_SIZE 20
+
+// Magic bytes for index packet.
+#define HEADER_MAGIC "index"
+#define HEADER_MAGIC_LEN (sizeof(HEADER_MAGIC) / sizeof(HEADER_MAGIC[0]))
+
+// Stores codec-specific skeleton info.
+class FisboneInfo {
 public:
-  Decoder(ogg_uint32_t serial) :
-    mSerial(serial),
-    mStartTime(-1),
-    mEndTime(-1),
-    mGotStartTime(false) {}
-
-  virtual ~Decoder() {}
-
-  virtual bool Decode(ogg_packet* packet,
-                      bool& isKeyFrame,
-                      ogg_int64_t& time) = 0;
-
-  virtual bool ReadHeader(ogg_packet* packet) = 0;
-
-  virtual bool GotAllHeaders() = 0;
   
+  FisboneInfo()
+    : mGranDenom(0)
+    , mGranNumer(0)
+    , mPreroll(0)
+    , mGranuleShift(0)
+  {}
+
+  // Granulerate numerator.
+  ogg_int64_t mGranNumer;
+
+  // Granulerate denominator.
+  ogg_int64_t mGranDenom;  
+  
+  ogg_int32_t mPreroll;
+  ogg_int32_t mGranuleShift;
+  
+  // "Content-Type: major/minor\r\n".
+  string mContentType;
+};
+
+// Stores info about a key point.
+class KeyFrameInfo {
+public:
+  KeyFrameInfo() : mOffset(0), mTime(-1), mChecksum(0) {}
+
+  KeyFrameInfo(ogg_int64_t offset, ogg_int64_t time, ogg_uint32_t checksum) :
+    mOffset(offset),
+    mTime(time),
+    mChecksum(checksum) {}
+  ogg_int64_t mOffset; // In bytes from beginning of file.
+  ogg_int64_t mTime; // In milliseconds.
+  ogg_uint32_t mChecksum;
+};
+
+// Maps a track's serialno to its keyframe index.
+typedef map<ogg_uint32_t, vector<KeyFrameInfo>*> KeyFrameIndex;
+
+// Free's all memory stored in the key frame index.
+void ClearKeyframeIndex(KeyFrameIndex& index);
+
+// Decodes an index packet, storing the decoded index in the KeyFrameIndex,
+// mapped to by the track's serialno.
+bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet);
+
+enum StreamType {
+  TYPE_UNKNOWN = 0,
+  TYPE_VORBIS = 1,
+  TYPE_THEORA = 2,
+  TYPE_SKELETON = 3,
+  TYPE_UNSUPPORTED = 4
+};
+
+// Superclass for indexer-decoder.
+class Decoder {
+protected:
+  ogg_stream_state mState;
+
+  // Serial of the stream we're decoding.
+  ogg_uint32_t mSerial;
+  
+  // Presentation time of the first frame/sample.
+  ogg_int64_t mStartTime;
+  
+  // End time of the last frame/sample.
+  ogg_int64_t mEndTime;
+  
+  // Initialize decoder.
+  Decoder(ogg_uint32_t serial);
+
+public:
+
+  virtual ~Decoder();
+
+  // Factory, creates appropriate decoder for the give beginning of stream page.
+  static Decoder* Create(ogg_page* bos_page);
+
+  // Decode page at offset, record relevant info to index keypoints.
+  virtual bool Decode(ogg_page* page, ogg_int64_t offset) = 0;
+
+  // Returns true when we've decoded all header packets.
+  virtual bool GotAllHeaders() = 0;
+
+  // Returns the keyframes for indexing. Call this after the entire stream
+  // has been decoded.
+  virtual const vector<KeyFrameInfo>& GetKeyframes() = 0;
+  
+  virtual StreamType Type() = 0;
+  virtual const char* TypeStr() = 0;
   ogg_int64_t GetStartTime() { return mStartTime; }
   ogg_int64_t GetEndTime() { return mEndTime; }
   virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) = 0;
-
-  virtual const char* TypeStr() { return "?"; }
-  
   ogg_uint32_t GetSerial() { return mSerial; }
 
+  // Returns the info for this stream to be stored in the skeleton fisbone
+  // packet.
   virtual FisboneInfo GetFisboneInfo() = 0;
 
-protected:
-  ogg_uint32_t mSerial;
-  ogg_int64_t mStartTime;
-  ogg_int64_t mEndTime;
-  bool mGotStartTime;
 };
 
+typedef map<ogg_uint32_t, Decoder*> DecoderMap;
+
+
+// Skeleton decoder. Must have public interface, as we use this in the
+// skeleton encoder as well.
+class SkeletonDecoder : public Decoder {
+public:
+
+  SkeletonDecoder(ogg_uint32_t serial);
+  virtual ~SkeletonDecoder() {}
+
+  virtual const char* TypeStr() { return "S"; }  
+
+  virtual StreamType Type() { return TYPE_SKELETON; }
+
+  virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
+    return -1;
+  }
+
+  virtual bool Decode(ogg_page* page, ogg_int64_t offset);
+
+  vector<KeyFrameInfo> mDummy;
+
+  virtual const vector<KeyFrameInfo>& GetKeyframes() {
+    return mDummy;
+  }
+
+  virtual bool GotAllHeaders() { return mGotAllHeaders; } 
+  virtual FisboneInfo GetFisboneInfo() { return FisboneInfo(); }
+
+  vector<ogg_packet*> mPackets;
+
+  // Maps track serialno to keyframe index, storing the keyframe indexes
+  // as they're read from the skeleton track.
+  map<ogg_uint32_t, vector<KeyFrameInfo>*> mIndex;
+
+private:
+  bool mGotAllHeaders;
+ 
+};
 
 #endif // __DECODER_HPP__

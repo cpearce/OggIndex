@@ -43,11 +43,8 @@
 #include <vorbis/codec.h>
 #include <assert.h>
 #include <string.h>
-#include "OggIndex.h"
-#include "Utils.h"
-#include "KeyFrameInfo.hpp"
-#include "bytes_io.h"
-#include "SkeletonDecoder.hpp"
+#include "Utils.hpp"
+#include "Decoder.hpp"
 
 using namespace std;
 
@@ -71,6 +68,8 @@ public:
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) = 0;
   
   virtual void Reset() = 0;
+  
+  virtual const char* Type() { return "unknown"; }  
 };
 
 
@@ -137,6 +136,8 @@ public:
     ogg_stream_reset(&mStreamState);
     mGranulepos = -1;
   }
+  
+  virtual const char* Type() { return "theora"; }
 
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
     if (ogg_page_serialno(page) != mSerial) {
@@ -256,17 +257,29 @@ public:
 
   virtual void Reset() {
     ogg_stream_reset(&mStreamState);  
+    ogg_packet op;
+    assert(ogg_stream_packetout(&mStreamState, &op) == 0);
+    if (mReadHeaders) {
+      vorbis_synthesis_restart(&mDsp);
+     }
   }
 
+  virtual const char* Type() { return "vorbis"; }
+
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+    assert(!ogg_page_continued(page));
+    ogg_packet op;
     end_time = -1;
     ogg_int64_t time = 0;
+    assert(ogg_stream_packetout(&mStreamState, &op) == 0);
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
-    ogg_packet op;
     int total_samples = 0;
     ogg_int64_t start_time = -1;
+    const int preroll_packets = 2;
+    int packet_count = 0;
     while (ogg_stream_packetout(&mStreamState, &op) == 1) {
+      packet_count++;
       if (!mReadHeaders) {
         ogg_int32_t ret = vorbis_synthesis_headerin(&mInfo, &mComment, &op);
         if (ret == 0) {
@@ -285,23 +298,24 @@ public:
       // We only expect the last packet in a page to have non -1 granulepos.
       assert(start_time == -1);
       int samples = 0;
-      float** pcm = 0;
       
       // Decode the vorbis to determine how many samples are in each packet.
       if (vorbis_synthesis(&mBlock, &op) == 0) {
         ret = vorbis_synthesis_blockin(&mDsp, &mBlock);
         assert(ret == 0);
       }
-      while ((samples = vorbis_synthesis_pcmout(&mDsp, &pcm)) > 0) {
+      while ((samples = vorbis_synthesis_pcmout(&mDsp, 0)) > 0) {
         total_samples += samples;
         ret = vorbis_synthesis_read(&mDsp, samples);
         assert(ret == 0);
       }
+      // We only expect the last packet in a page to have a granulepos.
+      assert(start_time == -1);
       if (op.granulepos != -1) {
         assert(op.granulepos == ogg_page_granulepos(page));
         ogg_int64_t start_granule = op.granulepos - total_samples;
         start_time = (1000 * start_granule) / mDsp.vi->rate;
-        end_time = (1000 * ogg_page_granulepos(page)) / mDsp.vi->rate;
+        end_time = (1000 * op.granulepos) / mDsp.vi->rate;
       }
     }
 
@@ -334,6 +348,8 @@ public:
   
   virtual void Reset() {
   }
+  
+  virtual const char* Type() { return "skeleton"; }
 
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
     end_time = -1;
@@ -382,14 +398,17 @@ public:
         }
         continue;
       }
-      
-      mReadHeaders = (ogg_page_eos(page) != 0);
+
+      if (op.e_o_s) {
+        assert(ogg_page_eos(page) != 0);
+        mReadHeaders = true;
+      }
     }  
-    return 0;
+    return true;
   }
 };
 
-typedef map<ogg_uint32_t, VerifyDecoder*> DecoderMap;
+typedef map<ogg_uint32_t, VerifyDecoder*> VerifyDecoderMap;
 
 static bool ReadAllHeaders(Theora* theora, Vorbis* vorbis, Skeleton* skeleton)
 {
@@ -405,7 +424,7 @@ bool ValidateIndexedOgg(const string& filename) {
   ogg_int32_t ret = ogg_sync_init(&state);
   assert(ret==0);
 
-  DecoderMap decoders;
+  VerifyDecoderMap decoders;
   ogg_page page;
   memset(&page, 0, sizeof(ogg_page));
   ogg_uint64_t bytesRead = 0;
@@ -413,6 +432,8 @@ bool ValidateIndexedOgg(const string& filename) {
   Vorbis* vorbis = 0;
   Skeleton* skeleton = 0;
   ogg_int64_t end_time = -1;
+  bool index_valid = true;
+  
   while (!ReadAllHeaders(theora, vorbis, skeleton) && 
          ReadPage(&state, &page, input, bytesRead))
   {
@@ -441,25 +462,23 @@ bool ValidateIndexedOgg(const string& filename) {
       cout << "WARNING: Unknown stream type, serialno=" << serialno << endl;
       continue;
     }
-    decoder->Decode(&page, end_time);
+    if (!decoder->Decode(&page, end_time)) {
+      index_valid = false;
+    }
   }
 
   ogg_int64_t fileLength = FileLength(filename.c_str());
   if (skeleton->mFileLength != fileLength) {
     cerr << "FAIL: index's reported file length (" << skeleton->mFileLength
          << ") doesn't match file's actual length (" << fileLength << ")" << endl;
-    return false;
+    index_valid = false;
   }
-
-  cout << "Read headers, validating key points." << endl;
 
   KeyFrameIndex::iterator itr = skeleton->mIndex.begin();
   if (itr == skeleton->mIndex.end()) {
     cerr << "WARNING: No tracks in skeleton index." << endl;
-    return false;
   }
 
-  bool index_valid = true;
   while (itr != skeleton->mIndex.end()) {
     vector<KeyFrameInfo>* v = itr->second;
     ogg_uint32_t serialno = itr->first;
@@ -470,9 +489,10 @@ bool ValidateIndexedOgg(const string& filename) {
       continue;
     }
     
-    cout << "Index for track s=" << serialno << endl;
     bool valid = true;
     VerifyDecoder* decoder = decoders[serialno];
+    cout << "Index for " << decoder->Type()
+         << " track serialno=" << serialno << ", " << v->size() << " keypoints." << endl;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
     
       KeyFrameInfo& keypoint = v->at(i);
@@ -499,22 +519,24 @@ bool ValidateIndexedOgg(const string& filename) {
       }
       input.seekg(keypoint.mOffset);
       if (!input.good()) {
-        cerr << "FAIL: Can't seek in file" << endl;
+        cerr << "FAIL: Can't seek to keypoint at byte offset " << keypoint.mOffset << endl;
         return false;
       }
       decoder->Reset();
       ogg_int64_t pres_time = -1;
       bool checksum_checked = false;
       ogg_int64_t end_time = -1;
+      ogg_int64_t page_offset = keypoint.mOffset;
       while (pres_time  == -1) {
         if (!ReadPage(&state, &page, input, bytesRead)) {
-          cerr << "FAIL: Can't read page" << endl;
+          cerr << "FAIL: Can't read page at offset " << page_offset << endl;
           return false;
         }
+        page_offset += page.header_len + page.body_len;
         if (!checksum_checked) {
           checksum_checked = true;
           if (GetChecksum(&page) != keypoint.mChecksum) {
-            cerr << "Verification failure: Incorrect checksum for page at offset "
+            cerr << "Verification failure: Incorrect checksum for page at byte offset "
                  << keypoint.mOffset << endl;
             valid = false;
           }
@@ -522,6 +544,9 @@ bool ValidateIndexedOgg(const string& filename) {
         // Extract the presentation time. Decode() returns -1 if it needs
         // another page.
         pres_time  = decoder->Decode(&page, end_time);
+        // Vorbis decoders should never return -1 for prestime, it should be
+        // calculable from only one page.
+        assert(decoder != vorbis || pres_time != -1);
       }
       
       // We consider that the key point is invalid if it's a theora keypoint,
@@ -529,16 +554,21 @@ bool ValidateIndexedOgg(const string& filename) {
       // forward doesn't match, or if it's a vorbis keypoint, and it doesn't
       // start in this vorbis page.
       if ((decoder == theora && pres_time != keypoint.mTime) ||
-          (decoder == vorbis && (keypoint.mTime < pres_time || keypoint.mTime > end_time)))
+          (decoder == vorbis && (keypoint.mTime < pres_time || end_time < keypoint.mTime)))
       {
-        cerr << "FAIL: keypoint at " << keypoint.mOffset << " reports presentation time of "
-             << keypoint.mTime << ", but presentation time there is actually " << pres_time << endl;
+        cerr << "FAIL: keypoint for page at offset " << keypoint.mOffset << " reports time of "
+             << keypoint.mTime << ", but time range of that page (after any preroll) is ["
+             << pres_time << "," << end_time << "]." << endl;
         valid = false;
       }
     }
-    index_valid &= valid;
     if (valid) {
-      cout << "Index for track s=" << serialno << " is valid" << endl;
+      cout << "Keyframe index for " << decoder->Type() << " track s="
+           << serialno << " is accurate" << endl;
+    } else {
+      cout << "FAIL: Keyframe index for " << decoder->Type() << " track s="
+           << serialno << " is NOT accurate." << endl;
+      index_valid = false;
     }
   }
 

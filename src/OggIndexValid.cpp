@@ -38,9 +38,7 @@
 
 #include <iostream>
 
-#include "OggIndex.h"
-#include "Utils.h"
-
+#include "Utils.hpp"
 
 static void
 PrintUsage() {
@@ -51,8 +49,6 @@ PrintUsage() {
        << endl;
   
 }
-
-bool ValidateIndexedOgg(const string& filename);
 
 int main(int argc, char** argv) 
 {

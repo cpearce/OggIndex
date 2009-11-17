@@ -45,7 +45,18 @@
 #include <ogg/ogg.h>
 #include <theora/codec.h>
 #include "Options.hpp"
-#include "KeyFrameInfo.hpp"
+#include "Decoder.hpp"
+
+// Define ogg_uint64_t.
+#if !defined __OGG_UINT64_T__
+#if defined WIN32
+#define __OGG_UINT64_T__
+typedef unsigned __int64 ogg_uint64_t;
+#else
+#include <stdint.h>
+typedef uint64_t ogg_uint64_t;
+#endif
+#endif
 
 ogg_page*
 Clone(ogg_page* p);
@@ -87,19 +98,49 @@ bool ReadPage(ogg_sync_state* state,
               istream& stream,
               ogg_uint64_t& bytesRead);
 
-bool VerifyIndex(const string& filename);
-
-
 bool IsFisheadPacket(ogg_packet* packet);
 
 bool IsFisbonePacket(ogg_packet* packet);
-
-bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet);
 
 int TheoraVersion(th_info* info,
                   unsigned char maj,
                   unsigned char min,
                   unsigned char sub);
 
-#endif
+#define SKELETON_VERSION(major, minor) (((major)<<16)|(minor))
 
+// Returns true if the file has an accurate Skeleton3.1 Index track.
+bool ValidateIndexedOgg(const string& filename);
+
+ogg_uint64_t
+LEUint64(unsigned char* p);
+
+ogg_int64_t
+LEInt64(unsigned char* p);
+
+ogg_uint32_t
+LEUint32(unsigned const char* p);
+
+static ogg_int32_t
+LEInt32(unsigned const char* p);
+
+ogg_uint16_t
+LEUint16(unsigned const char* p);
+
+
+unsigned char*
+WriteLEUint64(unsigned char* p, const ogg_uint64_t num);
+
+unsigned char*
+WriteLEInt64(unsigned char* p, const ogg_int64_t num);
+
+unsigned char*
+WriteLEUint32(unsigned char* p, const ogg_uint32_t num);
+
+unsigned char*
+WriteLEInt32(unsigned char* p, const ogg_int32_t num);
+
+unsigned char*
+WriteLEUint16(unsigned char* p, const ogg_uint16_t num);
+
+#endif

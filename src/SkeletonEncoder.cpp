@@ -47,7 +47,8 @@
 #include <string.h>
 #include "SkeletonEncoder.hpp"
 #include "Options.hpp"
-#include "Utils.h"
+#include "Utils.hpp"
+#include "Decoder.hpp"
 
 using namespace std;
 
@@ -62,16 +63,16 @@ using namespace std;
 
 
 static bool
-IsIndexable(OggStream* stream) {
-  return stream->mType == TYPE_VORBIS ||
-         stream->mType == TYPE_THEORA;
+IsIndexable(Decoder* decoder) {
+  return decoder->Type() == TYPE_VORBIS ||
+         decoder->Type() == TYPE_THEORA;
 }
 
 static bool
-IsUniqueSerialno(ogg_uint32_t serialno, vector<OggStream*>& streams)
+IsUniqueSerialno(ogg_uint32_t serialno, vector<Decoder*>& decoders)
 {
-  for (unsigned i=0; i<streams.size(); i++) {
-    if (streams[i]->mSerial == serialno) {
+  for (unsigned i=0; i<decoders.size(); i++) {
+    if (decoders[i]->GetSerial() == serialno) {
       return false;
     }
   }
@@ -79,17 +80,18 @@ IsUniqueSerialno(ogg_uint32_t serialno, vector<OggStream*>& streams)
 }
 
 static ogg_uint32_t
-GetUniqueSerialNo(vector<OggStream*>& streams)
+GetUniqueSerialNo(vector<Decoder*>& decoders)
 {
   ogg_uint32_t serialno;
   srand((unsigned)time(0));
   do {
     serialno = rand();
-  } while (!IsUniqueSerialno(serialno, streams));
+  } while (!IsUniqueSerialno(serialno, decoders));
   return serialno;
 }
 
-SkeletonEncoder::SkeletonEncoder(vector<OggStream*>& streams,
+
+SkeletonEncoder::SkeletonEncoder(DecoderMap& decoders,
                                  ogg_int64_t fileLength,
                                  ogg_int64_t oldSkeletonLength)
   : mFileLength(fileLength),
@@ -97,16 +99,19 @@ SkeletonEncoder::SkeletonEncoder(vector<OggStream*>& streams,
     mPacketCount(0),
     mSkeletonDecoder(0)
 {
-  for (ogg_uint32_t i=0; i<streams.size(); i++) {
-    if (IsIndexable(streams[i])) {
-      mStreams.push_back(streams[i]);
+  DecoderMap::iterator itr = decoders.begin();
+  while (itr != decoders.end()) {
+    Decoder* d = itr->second;
+    if (IsIndexable(d)) {
+      mDecoders.push_back(d);
     }
-    if (streams[i]->mType == TYPE_SKELETON) {
-      mSkeletonDecoder = (SkeletonDecoder*)streams[i]->mDecoder;
+    if (d->Type() == TYPE_SKELETON) {
+      mSkeletonDecoder = (SkeletonDecoder*)d;
     }
+    itr++;
   }
   mSerial = mSkeletonDecoder ? mSkeletonDecoder->GetSerial()
-                             : GetUniqueSerialNo(mStreams);
+                             : GetUniqueSerialNo(mDecoders);
 }
 
 SkeletonEncoder::~SkeletonEncoder() {
@@ -119,7 +124,7 @@ SkeletonEncoder::~SkeletonEncoder() {
 
 
 static ogg_int64_t
-GetMinStartTime(vector<OggStream*>& streams) 
+GetMinStartTime(vector<Decoder*>& streams) 
 {
   ogg_int64_t m = LLONG_MAX;
   for (ogg_uint32_t i=0; i<streams.size(); i++) {
@@ -132,7 +137,7 @@ GetMinStartTime(vector<OggStream*>& streams)
 }
 
 static ogg_int64_t
-GetMaxEndtime(vector<OggStream*>& streams)
+GetMaxEndtime(vector<Decoder*>& streams)
 {
   ogg_int64_t m = LLONG_MIN;
   for (ogg_uint32_t i=0; i<streams.size(); i++) {
@@ -176,8 +181,8 @@ SkeletonEncoder::AddBosPacket()
   WriteLEUint16(bos->packet+10, 1);
   
   // Write start time and end time.
-  WriteLEInt64(bos->packet + 64, GetMinStartTime(mStreams));
-  WriteLEInt64(bos->packet + 72, GetMaxEndtime(mStreams));
+  WriteLEInt64(bos->packet + 64, GetMinStartTime(mDecoders));
+  WriteLEInt64(bos->packet + 72, GetMaxEndtime(mDecoders));
   
   mPacketCount++;
 
@@ -250,11 +255,11 @@ IsSorted(vector<ogg_packet*>& indexes)
 void
 SkeletonEncoder::ConstructIndexPackets() {
   assert(mIndexPackets.size() > 0);
-  for (ogg_uint32_t i=0; i<mStreams.size(); i++) {
+  for (ogg_uint32_t i=0; i<mDecoders.size(); i++) {
     ogg_packet* packet = new ogg_packet();
     memset(packet, 0, sizeof(ogg_packet));
     
-    vector<KeyFrameInfo>& keyframes = mStreams[i]->mKeyframes;
+    const vector<KeyFrameInfo>& keyframes = mDecoders[i]->GetKeyframes();
     
     const ogg_int32_t tableSize = HEADER_MAGIC_LEN + 4 + 4 +
                                   (int)keyframes.size() * KEY_POINT_SIZE;
@@ -268,14 +273,14 @@ SkeletonEncoder::ConstructIndexPackets() {
     p += HEADER_MAGIC_LEN;
 
     // Stream serialno.
-    p = WriteLEUint32(p, mStreams[i]->mSerial);
+    p = WriteLEUint32(p, mDecoders[i]->GetSerial());
     
     // Number of key points.
     assert(keyframes.size() < UINT_MAX);
     p = WriteLEUint32(p, (ogg_uint32_t)keyframes.size());
 
     for (ogg_uint32_t i=0; i<keyframes.size(); i++) {
-      KeyFrameInfo& k = keyframes[i];
+      const KeyFrameInfo& k = keyframes[i];
       p = WriteLEUint64(p, k.mOffset);
       p = WriteLEUint32(p, k.mChecksum);
       p = WriteLEUint64(p, k.mTime);
@@ -299,7 +304,7 @@ SkeletonEncoder::ConstructIndexPackets() {
 void
 SkeletonEncoder::ConstructPages() {
   
-  assert(mIndexPackets.size() == 2 * mStreams.size() + 2);
+  assert(mIndexPackets.size() == 2 * mDecoders.size() + 2);
   
   ClearIndexPages();
 
@@ -317,6 +322,7 @@ SkeletonEncoder::ConstructPages() {
   ret = ogg_stream_packetin(&state, mIndexPackets[0]);
   assert(ret == 0);
   ret = ogg_stream_flush(&state, &page);
+  assert(ret != 0);
   AppendPage(page);
 
   // Normal skeleton header packets...
@@ -327,12 +333,13 @@ SkeletonEncoder::ConstructPages() {
   
   while (ogg_stream_pageout(&state, &page) != 0) {
     assert(!ogg_page_bos(&page));
-    //assert(!ogg_page_eos(&page));
     AppendPage(page);
   }
 
   ret = ogg_stream_flush(&state, &page);
-  AppendPage(page);
+  if (ret != 0) {
+    AppendPage(page);
+  }
    
   ogg_stream_clear(&state); 
 
@@ -356,8 +363,10 @@ ogg_int64_t
 SkeletonEncoder::GetTrackLength()
 {
   ogg_int64_t length = 0;
+  int packets = 0;
   for (ogg_uint32_t i=0; i<mIndexPages.size(); i++) {
-    length += mIndexPages[i]->body_len + mIndexPages[i]->header_len;
+    length += mIndexPages[i]->header_len + mIndexPages[i]->body_len;
+    packets += ogg_page_packets(mIndexPages[i]);
   }
   return length;
 }
@@ -375,6 +384,7 @@ SkeletonEncoder::CorrectOffsets() {
   // amount to the page offsets in the index packets, as they've changed by
   // this much.
   ogg_int64_t lengthDiff = fileLength - mFileLength;
+  assert(lengthDiff == (GetTrackLength() - mOldSkeletonLength));
 
   for (ogg_uint32_t idx=0; idx<mIndexPackets.size(); idx++) {
     ogg_packet* packet = mIndexPackets[idx];
@@ -420,7 +430,7 @@ SkeletonEncoder::WritePages(ofstream& output) {
 bool
 SkeletonEncoder::HasFisbonePackets() {
   return mSkeletonDecoder &&
-         mSkeletonDecoder->mPackets.size() == mStreams.size() + 2;
+         mSkeletonDecoder->mPackets.size() == mDecoders.size() + 2;
 }
 
 void
@@ -433,7 +443,7 @@ SkeletonEncoder::AddFisbonePackets() {
     }
   } else {
     // Have to construct fisbone packets.
-    for (ogg_uint32_t i=0; i<mStreams.size(); i++) {
+    for (ogg_uint32_t i=0; i<mDecoders.size(); i++) {
       ogg_packet* packet = new ogg_packet();
       memset(packet, 0, sizeof(ogg_packet));
       
@@ -447,12 +457,12 @@ SkeletonEncoder::AddFisbonePackets() {
       WriteLEInt32(packet->packet+8, FISBONE_MESSAGE_HEADER_OFFSET);
       
       // Serialno of the stream.
-      WriteLEUint32(packet->packet+12, mStreams[i]->mSerial);
+      WriteLEUint32(packet->packet+12, mDecoders[i]->GetSerial());
       
       // Number of header packets. 3 for both vorbis and theora.
       WriteLEUint32(packet->packet+16, 3);
       
-      FisboneInfo info = mStreams[i]->GetFisboneInfo();
+      FisboneInfo info = mDecoders[i]->GetFisboneInfo();
       
       // Granulrate numerator.
       WriteLEInt64(packet->packet+20, info.mGranNumer);

@@ -50,17 +50,12 @@
 #include <stdlib.h>
 #include <limits.h>
 
-#include "OggIndex.h"
 #include "Options.hpp"
 #include "Decoder.hpp"
-#include "SkeletonDecoder.hpp"
 #include "SkeletonEncoder.hpp"
-#include "Utils.h"
+#include "Utils.hpp"
 
 using namespace std;
-
-bool ValidateIndexedOgg(const string& filename);
-
 
 int main(int argc, char** argv) 
 {
@@ -73,8 +68,9 @@ int main(int argc, char** argv)
   ogg_sync_state state;
   ogg_int32_t ret = ogg_sync_init(&state);
   assert(ret==0);
-
-  StreamMap streams;
+ 
+  DecoderMap decoders;
+  
   ogg_page page;
   memset(&page, 0, sizeof(ogg_page));
 
@@ -88,8 +84,7 @@ int main(int argc, char** argv)
   bool gotAllHeaders = false;
   ogg_uint64_t endOfHeaders = 0;
   ogg_uint64_t oldSkeletonLength = 0;
-  
-  OggStream *skeleton = 0;
+
   
   // We store all non-skeleton header pages in the order in which we read them,
   // so that we can rewrite them easily.
@@ -99,28 +94,35 @@ int main(int argc, char** argv)
     assert(IsPageAtOffset(filename, offset, &page));
     pageNumber++;
     ogg_uint32_t serial = ogg_page_serialno(&page);
-    OggStream* stream = 0;
+    Decoder* decoder = 0;
     if (ogg_page_bos(&page)) {
-      stream = new OggStream(serial);
-      streams[serial] = stream;
+      decoder = Decoder::Create(&page);
+      decoders[serial] = decoder;
     } else {
-      stream = streams[serial];
+      decoder = decoders[serial];
+    }
+    if (!decoder) {
+      cerr << "FAIL: Unhandled stream type, serialno="
+           << serial << " aborting indexing!" << endl;
+      return -1;
     }
 
     ogg_uint32_t length = page.body_len + page.header_len;
-    stream->Decode(&page, offset);
+    decoder->Decode(&page, offset);
     ogg_uint32_t oldSkelentonLength = 0;
     
     if (!gotAllHeaders) {
-      vector<OggStream*> sv = GetStreamVector(streams);
       gotAllHeaders = true;
-      for (ogg_uint32_t i=0; i<sv.size(); i++) {
-        if (!sv[i]->GotAllHeaders()) {
-          gotAllHeaders = false; 
+      DecoderMap::iterator itr = decoders.begin();
+      while (itr != decoders.end()) {
+        Decoder* d = itr->second;
+        if (!d->GotAllHeaders()) {
+          gotAllHeaders = false;
           break;
         }
+        itr++;
       }
-      if (stream->mType == TYPE_SKELETON) {
+      if (decoder->Type() == TYPE_SKELETON) {
         oldSkeletonLength += length;
       } else {
         // Record all header pages except skeleton. We'll just rewrite the
@@ -131,18 +133,12 @@ int main(int argc, char** argv)
         endOfHeaders = offset + length;
       }
     }
-
-    if (stream->mType == TYPE_UNKNOWN) {
-      cerr << "FAIL: Unhandled content type in stream serialno="
-           << stream->mSerial << " aborting indexing!" << endl;
-      return -1;
-    }
     
     if (gOptions.GetDumpPages()) {
       ogg_int64_t granulepos = ogg_page_granulepos(&page);
-      cout << "[" << stream->TypeStr() << "] page @" << offset
+      cout << "[" << decoder->TypeStr() << "] page @" << offset
            << " length=" << length << " granulepos=" << granulepos 
-           << " time=" << stream->GranuleposToTime(granulepos) << "ms"
+           << " end_time=" << decoder->GranuleposToTime(granulepos) << "ms"
            << " s=" << serial << endl;
     }
 
@@ -154,15 +150,13 @@ int main(int argc, char** argv)
   assert(input.eof());
   if (offset != fileLength) {
     cerr << "WARNING: Ogg page lengths don't sum to file length!" << endl;
-  }
+  }  
   
   assert(fileLength == InputFileLength());
   
   ogg_sync_clear(&state);
   
-  vector<OggStream*> sv = GetStreamVector(streams);
-
-  SkeletonEncoder encoder(sv, fileLength, oldSkeletonLength);
+  SkeletonEncoder encoder(decoders, fileLength, oldSkeletonLength);
 
   // Reopen the file so we can write it out with the index.
   input.close();
