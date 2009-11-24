@@ -108,6 +108,16 @@ int main(int argc, char** argv)
     }
 
     ogg_uint32_t length = page.body_len + page.header_len;
+
+    if (gOptions.GetDumpPages()) {
+      ogg_int64_t granulepos = ogg_page_granulepos(&page);
+      cout << "[" << decoder->TypeStr() << "] page @" << offset
+           << " length=" << length << " granulepos=" << granulepos 
+           << " end_time=" << decoder->GranuleposToTime(granulepos) << "ms"
+           << " s=" << serial << " packet_starts=" << CountPacketStarts(&page)
+           << " packet_ends=" << ogg_page_packets(&page) << endl;
+    }
+
     decoder->Decode(&page, offset);
     ogg_uint32_t oldSkelentonLength = 0;
     
@@ -132,14 +142,6 @@ int main(int argc, char** argv)
       if (gotAllHeaders) {
         endOfHeaders = offset + length;
       }
-    }
-    
-    if (gOptions.GetDumpPages()) {
-      ogg_int64_t granulepos = ogg_page_granulepos(&page);
-      cout << "[" << decoder->TypeStr() << "] page @" << offset
-           << " length=" << length << " granulepos=" << granulepos 
-           << " end_time=" << decoder->GranuleposToTime(granulepos) << "ms"
-           << " s=" << serial << endl;
     }
 
     offset += length;

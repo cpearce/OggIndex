@@ -34,5 +34,5 @@ Skeleton 'fisbone\0' packets unchanged, one per stream.
     - the page's byte offset as an 8 byte unsigned integer, followed by
     - the checksum of the page found at the offset, as a 4 byte field,
       followed by
-    - the presentation time in milliseconds of the key point, as an 8
-      byte unsigned integer. 
+    - the presentation time in milliseconds of the first key point which
+      starts on the page at offset, as an 8 byte unsigned integer. 

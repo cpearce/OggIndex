@@ -65,7 +65,7 @@ public:
     ogg_stream_clear(&mStreamState);
   }
   
-  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) = 0;
+  virtual ogg_int64_t Decode(ogg_page* page) = 0;
   
   virtual void Reset() = 0;
   
@@ -139,28 +139,34 @@ public:
   
   virtual const char* Type() { return "theora"; }
 
-  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+  // Decode all keyframes in the given page, and return the [start,end] range
+  // encompases by all keyframes on this page, even if they're interleaved with
+  // non-keyframes.
+  virtual ogg_int64_t Decode(ogg_page* page) {
     if (ogg_page_serialno(page) != mSerial) {
       return -1;
     }
-    end_time = -1;
-    ogg_int64_t time = -1;
- 
-    int ret = ogg_stream_pagein(&mStreamState, page);
-    assert(ret == 0);
+    ogg_int64_t start_time = INT_MAX;
 
-    // If we've got a previously buffered packet info, use its time info
-    // instead.
-    time = NextKeyframeTime();
-    if (time != -1) {
-      end_time = time + mFrameDuration;
-      return time;
+    if (mGranulepos == -1 &&
+        ogg_page_granulepos(page) != -1 &&
+        ogg_page_packets(page) == 1 &&
+        ogg_page_continued(page))
+    {
+      mGranulepos = ogg_page_granulepos(page);
     }
+
     assert(AllBufferedGranuleposInvalid());
 
     int shift = mInfo.keyframe_granule_shift;
     ogg_packet op;
-    while (ogg_stream_packetout(&mStreamState, &op) == 1) {
+    int ret = ogg_stream_pagein(&mStreamState, page);
+    assert(ret == 0);
+    while ((ret = ogg_stream_packetout(&mStreamState, &op)) != 0) {
+      if (ret == -1) {
+        cout << "WARNING: Theora decoder out of sync!" << endl;
+        continue;
+      }
       if (!mReadHeaders) {
         ogg_int32_t ret = th_decode_headerin(&mInfo,
                                              &mComment,
@@ -194,47 +200,54 @@ public:
         } else {
           p.granulepos = mGranulepos + 1;
         }
+        assert(th_granule_frame(mCtx, mGranulepos) + 1 ==
+               th_granule_frame(mCtx, p.granulepos));
+        
       }
       mBuffer.push_back(p);
 
-      if (p.granulepos != -1) {
-        // We've got buffered packets, and the last one has a known
-        // granulepos. Use its granulepos to calculate the other granulepos.          
-        mGranulepos = p.granulepos;
-        list<PacketInfo>::reverse_iterator rev_itr = mBuffer.rbegin();
-        PacketInfo *prev = &(*rev_itr);
-        rev_itr++;
-        while (rev_itr != mBuffer.rend()) {
-          PacketInfo* p = &(*rev_itr);
-          assert(prev->granulepos != -1);
-          ogg_int64_t granulepos;
-          if (p->isKeyFrame) {
-            granulepos =
-              (th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1) - 1) << shift;
-          } else {
-            granulepos = prev->granulepos - 1;
-          }
-          if (p->granulepos != -1 &&
-            th_granule_frame(mCtx, p->granulepos) + TheoraVersion(&mInfo,3,2,1) !=
-            th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1)- 1)
-          {
-            cerr << "WARNING: Miscalculated granulepos!" << endl;
-          }
-          p->granulepos = granulepos;
-          prev = p;
-          rev_itr++;
-        }
-        assert(mBuffer.front().granulepos != -1);
-        assert(mBuffer.size() > 0);
+      if (p.granulepos == -1) {
+        continue;
       }
-      time = NextKeyframeTime();
+
+      assert(op.granulepos == -1 || op.granulepos == ogg_page_granulepos(page));
+
+      // We've got buffered packets, and the last one has a known
+      // granulepos. Use its granulepos to calculate the other granulepos.          
+      mGranulepos = p.granulepos;
+      list<PacketInfo>::reverse_iterator rev_itr = mBuffer.rbegin();
+      PacketInfo *prev = &(*rev_itr);
+      rev_itr++;
+      while (rev_itr != mBuffer.rend()) {
+        PacketInfo* p = &(*rev_itr);
+        assert(prev->granulepos != -1);
+        ogg_int64_t granulepos;
+        if (p->isKeyFrame) {
+          granulepos =
+            (th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1) - 1) << shift;
+        } else {
+          granulepos = prev->granulepos - 1;
+        }
+        if (p->granulepos != -1 &&
+          th_granule_frame(mCtx, p->granulepos) + TheoraVersion(&mInfo,3,2,1) !=
+          th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1)- 1)
+        {
+          cerr << "ERROR: I've miscalculated granulepos!" << endl;
+        }
+        p->granulepos = granulepos;
+        prev = p;
+        rev_itr++;
+      }
+      assert(mBuffer.front().granulepos != -1);
+      assert(mBuffer.size() > 0);
+
+      ogg_int64_t time = NextKeyframeTime();
       if (time != -1) {
-        return time;
+        start_time = min(time, start_time);
       }        
-      assert(AllBufferedGranuleposInvalid());
     }
    
-    return -1;
+    return (start_time != INT_MAX) ? start_time : -1;
   }
 };
 
@@ -266,10 +279,9 @@ public:
 
   virtual const char* Type() { return "vorbis"; }
 
-  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+  virtual ogg_int64_t Decode(ogg_page* page) {
     assert(!ogg_page_continued(page));
     ogg_packet op;
-    end_time = -1;
     ogg_int64_t time = 0;
     assert(ogg_stream_packetout(&mStreamState, &op) == 0);
     int ret = ogg_stream_pagein(&mStreamState, page);
@@ -315,7 +327,6 @@ public:
         assert(op.granulepos == ogg_page_granulepos(page));
         ogg_int64_t start_granule = op.granulepos - total_samples;
         start_time = (1000 * start_granule) / mDsp.vi->rate;
-        end_time = (1000 * op.granulepos) / mDsp.vi->rate;
       }
     }
 
@@ -351,8 +362,7 @@ public:
   
   virtual const char* Type() { return "skeleton"; }
 
-  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
-    end_time = -1;
+  virtual ogg_int64_t Decode(ogg_page* page) {
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
     ogg_packet op;
@@ -462,7 +472,7 @@ bool ValidateIndexedOgg(const string& filename) {
       cout << "WARNING: Unknown stream type, serialno=" << serialno << endl;
       continue;
     }
-    if (!decoder->Decode(&page, end_time)) {
+    if (!decoder->Decode(&page)) {
       index_valid = false;
     }
   }
@@ -493,6 +503,7 @@ bool ValidateIndexedOgg(const string& filename) {
     VerifyDecoder* decoder = decoders[serialno];
     cout << "Index for " << decoder->Type()
          << " track serialno=" << serialno << ", " << v->size() << " keypoints." << endl;
+
     for (ogg_uint32_t i=0; i<v->size(); i++) {
     
       KeyFrameInfo& keypoint = v->at(i);
@@ -525,8 +536,8 @@ bool ValidateIndexedOgg(const string& filename) {
       decoder->Reset();
       ogg_int64_t pres_time = -1;
       bool checksum_checked = false;
-      ogg_int64_t end_time = -1;
       ogg_int64_t page_offset = keypoint.mOffset;
+      bool second_try = false;
       while (pres_time  == -1) {
         if (!ReadPage(&state, &page, input, bytesRead)) {
           cerr << "FAIL: Can't read page at offset " << page_offset << endl;
@@ -543,23 +554,37 @@ bool ValidateIndexedOgg(const string& filename) {
         }
         // Extract the presentation time. Decode() returns -1 if it needs
         // another page.
-        pres_time  = decoder->Decode(&page, end_time);
+        if (ogg_page_serialno(&page) != decoder->mSerial) {
+          // Skip until we read another page on this stream.
+          continue;
+        }
+        pres_time = decoder->Decode(&page);
         // Vorbis decoders should never return -1 for prestime, it should be
         // calculable from only one page.
         assert(decoder != vorbis || pres_time != -1);
       }
-      
-      // We consider that the key point is invalid if it's a theora keypoint,
-      // and the presentation time of the first keypoint found from this page
-      // forward doesn't match, or if it's a vorbis keypoint, and it doesn't
-      // start in this vorbis page.
-      if ((decoder == theora && pres_time != keypoint.mTime) ||
-          (decoder == vorbis && (keypoint.mTime < pres_time || end_time < keypoint.mTime)))
-      {
-        cerr << "FAIL: keypoint for page at offset " << keypoint.mOffset << " reports time of "
-             << keypoint.mTime << ", but time range of that page (after any preroll) is ["
-             << pres_time << "," << end_time << "]." << endl;
+
+      // We consider that the key point is invalid if it's reported time
+      // doesn't match the presentation time of the first keyframe which
+      // can be decoded from this page.
+      if (keypoint.mTime != pres_time) {
+        cerr << "FAIL: keypoint " << i << " for page at offset " << keypoint.mOffset
+             << " reports start time of " << keypoint.mTime << " but should be "
+             << pres_time << endl;
         valid = false;
+        if (!second_try) {
+          // Try to read another page, to see if the keyframe actually occurs
+          // on the next page. The file is still technically invalid, but it's
+          // helpful to know that it's off-by-one...
+          pres_time = -1;
+          second_try = true;
+        } else {
+          break;
+        }
+      }
+      if (second_try) {
+        cerr << "FAIL: keypoint " << i << " begins on the page after it's "
+             << "reported as beginning on!" << endl;
       }
     }
     if (valid) {

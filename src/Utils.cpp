@@ -237,7 +237,22 @@ int TheoraVersion(th_info* info,
   return (th_ver >= ver) ? 1 : 0;
 }
 
-
+// Returns the number of packets that start on a page.
+int
+CountPacketStarts(ogg_page* page)
+{
+  int i;
+  // If we're not continuing a packet, we're at a packet start.
+  int packets_start = (ogg_page_continued(page) == 0) ? 1 : 0;
+  int num_lacing_vals = page->header[26];
+  unsigned char* lacing_vals = &page->header[27];
+  for (i=1; i<num_lacing_vals; i++) {
+    if (lacing_vals[i-1] < 0xff) {
+      packets_start++;
+    }
+  }
+  return packets_start;
+}
 
 unsigned char*
 WriteLEUint64(unsigned char* p, const ogg_uint64_t num)

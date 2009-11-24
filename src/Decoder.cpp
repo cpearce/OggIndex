@@ -75,23 +75,6 @@ Decoder::~Decoder() {
   ogg_stream_clear(&mState);
 }
 
-// Returns the number of packets that start on a page.
-static int
-CountPacketStarts(ogg_page* page)
-{
-  int i;
-  // If we're not continuing a packet, we're at a packet start.
-  int packets_start = (page->header[5]&0x01) ? 0 : 1; 
-  int num_lacing_vals = page->header[26];
-  unsigned char* lacing_vals = &page->header[27];
-  for (i=1; i<num_lacing_vals; i++) {
-    if (lacing_vals[i-1] < 0xff)
-      packets_start++;
-  }
-  return packets_start;
-}
-
-
 class TheoraDecoder : public Decoder { 
 public:
 
@@ -134,7 +117,7 @@ public:
     ogg_uint32_t checksum;
     
     // Number of packets that start on this page.
-    int num_packets; 
+    int num_packets;
   };
 
   struct Frame {
@@ -156,27 +139,49 @@ public:
 
   // Keypoint info which we'll write into the index packet.
   vector<KeyFrameInfo> mKeyFrames;
-    
+
   virtual const vector<KeyFrameInfo>& GetKeyframes() {
     // Construct list of keyframes from page and frame info lists.
     // Need to determine frame start offsets and fill key points array.
-    ogg_int64_t packet_start_count = 3; // Account for header packets
+
+    // Packetno of the last packet which has started. 2 is the packetno of
+    // the last header packet.
+    ogg_int64_t started_packetno = 2;
     unsigned pageno = 0;
+    int prev_keyframe_pageno = -INT_MAX;
+    ogg_int64_t prev_keyframe_start_time = -INT_MAX;
     for (unsigned f=0; f<mFrames.size(); f++) {
       Frame& frame = mFrames[f];
       ogg_int64_t packetno = frame.packetno;
-      while (pageno < mPages.size() && 
-             packet_start_count + mPages[pageno].num_packets < packetno)
+
+      while (pageno < mPages.size() &&
+             started_packetno + mPages[pageno].num_packets < packetno)
       {
-        packet_start_count += mPages[pageno].num_packets;
+        started_packetno += mPages[pageno].num_packets;
         pageno++;  
       } // pages
       assert(pageno < mPages.size());
+      assert(started_packetno < packetno &&
+             started_packetno + mPages[pageno].num_packets >= packetno);
+
+      if (pageno == prev_keyframe_pageno) {
+        // Only consider the pages' first key point.
+        continue;
+      }
+
       KeyFrameInfo k(mPages[pageno].offset,
                      StartTime(frame.granulepos),
                      mPages[pageno].checksum);
-      mKeyFrames.push_back(k);
-    }// frames
+
+      // Only add the keyframe to the list if it's far enough after the
+      // previous keyframe.
+      if (k.mTime > prev_keyframe_start_time + gOptions.GetKeyPointInterval()) {
+        prev_keyframe_start_time = k.mTime;
+        mKeyFrames.push_back(k);
+      }
+      prev_keyframe_pageno = pageno;
+
+    } // for each frame
     return mKeyFrames;
   }
 
@@ -191,6 +196,7 @@ public:
   }
 
   bool Decode(ogg_page* page, ogg_int64_t offset) {
+    assert(ogg_page_serialno(page) == mSerial);
     if (GotAllHeaders()) {
       Page record;
       record.checksum = Checksum(page);
@@ -205,7 +211,12 @@ public:
 
     ogg_packet packet;
     int num_packets = 0;
-    while (ogg_stream_packetout(&mState, &packet) == 1) {
+    while ((ret = ogg_stream_packetout(&mState, &packet)) != 0) {
+      if (ret == -1) {
+        cerr << "WARNING: Lost sync decoding packets on theora page "
+             << mPages.size() << endl;
+        continue;
+      }
       num_packets++;
       if (!GotAllHeaders()) {
         // Read Headers...
@@ -231,53 +242,62 @@ public:
       
         // Packet should only have a granulepos if the page does.
         assert(page_granulepos != -1 || packet.granulepos == -1);
+        assert(packet.granulepos == -1 || packet.granulepos == page_granulepos);
       
         // We've not yet determined the granulepos of the first (or previous)
         // packet. Remember the packet, even if it's not a keyframe so that
         // we can backtrack to get all packets' start time.
         mFrames.push_back(Frame(packet));
-        
-        if (packet.granulepos != -1) {
-          for (int i=(int)mFrames.size()-2; i>=0; i--) {
-            ogg_int64_t prev_granulepos = mFrames[i+1].granulepos;
-            assert(prev_granulepos != -1);
-            ogg_int64_t granulepos = -1;
-            if (mFrames[i].is_keyframe) {
-              // Note th_granule_frame() returns the frame index (e.g. frame
-              // 1's index is 0) so we don't need to decrement it, as
-              // th_granule_frame() effectively does that for us.
-              ogg_int64_t frame = th_granule_frame(mCtx, prev_granulepos) - 1;
-              granulepos = frame << shift;
-            } else {
-              granulepos = prev_granulepos - 1;
-            }
-            // This frame's granule number should be one less than the previous.
-            assert(th_granule_frame(mCtx, granulepos) + 1 ==
-                   th_granule_frame(mCtx, prev_granulepos));
-            mFrames[i].granulepos = granulepos;
-          }
-          // Now all packets have a known time.
-          assert(mStartTime == -1);
-          mStartTime = StartTime(mFrames[0].granulepos);
-          assert(mStartTime >= 0);
-          mEndTime = EndTime(mFrames[mFrames.size()-1].granulepos);
-          assert(mEndTime >= mStartTime);
 
-          // Remove the frames that aren't keyframes.
-          ogg_int64_t prev_keyframe = -INT_MAX;
-          for (unsigned i=0; i<mFrames.size(); i++) {
-            if (!mFrames[i].is_keyframe ||
-                EndTime(mFrames[i].granulepos) < prev_keyframe + MIN_KEYFRAME_OFFSET)
-            {
-              mFrames.erase(mFrames.begin()+i);
-              i--;
-              continue;
-            }
-            assert(mFrames[i].is_keyframe);
-            prev_keyframe = EndTime(mFrames[i].granulepos);
-          }
-          mGranulepos = packet.granulepos;
+        if (packet.granulepos == -1) {
+          // We've stored the packet, once we find one with a non -1 granulepos
+          // we can find the first packet's granulepos.
+          continue;
         }
+        
+        // We know a packet's granulepos, use it to tag the packets buffered
+        // before it so that they have valid granulepos.
+        for (int i=(int)mFrames.size()-2; i>=0; i--) {
+          ogg_int64_t prev_granulepos = mFrames[i+1].granulepos;
+          assert(prev_granulepos != -1);
+          ogg_int64_t granulepos = -1;
+          if (mFrames[i].is_keyframe) {
+            ogg_int64_t frame = th_granule_frame(mCtx, prev_granulepos) +
+                                TheoraVersion(&mInfo,3,2,1) - 1;
+            assert(frame > 0);
+            granulepos = frame << shift;
+          } else {
+            // We must be offset by more than 1 frame for this to work.
+            assert((prev_granulepos & ((1 << shift) - 1)) > 0);
+            granulepos = prev_granulepos - 1;
+          }
+          // This frame's granule number should be one less than the previous.
+          assert(th_granule_frame(mCtx, granulepos) ==
+                 th_granule_frame(mCtx, prev_granulepos) - 1);
+          mFrames[i].granulepos = granulepos;
+        }
+        // Now all packets have a known time.
+        assert(mStartTime == -1);
+        mStartTime = StartTime(mFrames.front().granulepos);
+        assert(mStartTime >= 0);
+        mEndTime = EndTime(mFrames.back().granulepos);
+        assert(mEndTime >= mStartTime);
+
+        // Print/log packets before we remove non-keyframe packets.
+        for (unsigned i=0; i<mFrames.size(); i++) {
+          DumpPacket(mFrames[i]);
+        }
+
+        // Remove the frames that aren't keyframes.
+        for (unsigned i=0; i<mFrames.size(); i++) {
+          if (!mFrames[i].is_keyframe) {
+            mFrames.erase(mFrames.begin()+i);
+            i--;
+            continue;
+          }
+          assert(mFrames[i].is_keyframe);
+        }
+        mGranulepos = packet.granulepos;
         continue;
       }
 
@@ -290,6 +310,8 @@ public:
                       TheoraVersion(&mInfo,3,2,1)) << shift;
       } else {
         granulepos = mGranulepos + 1;
+        ogg_int64_t max_offset = (1 << shift) - 1;
+        assert((mGranulepos & max_offset) + 1 <= max_offset);
       }
       assert(th_granule_frame(mCtx, mGranulepos) + 1 ==
              th_granule_frame(mCtx, granulepos));
@@ -297,22 +319,32 @@ public:
       packet.granulepos = granulepos;
       mGranulepos = granulepos;
       
-      if (is_keyframe && EndTime(granulepos) > mNextKeyframeThreshold) {
-        mFrames.push_back(Frame(packet));
-        mNextKeyframeThreshold = EndTime(granulepos) +
-                                 gOptions.GetKeyPointInterval();
+      Frame f(packet);
+      DumpPacket(f);
+      if (is_keyframe) {
+        mFrames.push_back(f);
       }
       mEndTime = EndTime(mGranulepos);
     } // end while packetout.
-    assert(num_packets == ogg_page_packets(page));
-    
+    if (num_packets != ogg_page_packets(page)) {
+      cerr << "WARNING: Fewer packets finished on theora page "
+           << mPages.size() << " than expected." << endl;
+    }
     return true;
   }
 
+  void DumpPacket(Frame& f) {
+    if (!gOptions.GetDumpPackets() &&
+        !gOptions.GetDumpKeyPackets())
+      return;
+    cout << "[T] " << (f.is_keyframe ? "keyframe" : "frame")
+         << " time_ms=[" << StartTime(f.granulepos) << ","
+         << EndTime(f.granulepos) << "] granulepos=" << f.granulepos
+         << " packetno=" << f.packetno << endl;
+  }  
 
   virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
-    assert(GotAllHeaders());
-    return EndTime(granulepos);
+    return (!GotAllHeaders()) ? -1 : EndTime(granulepos);
   }
 
   virtual FisboneInfo GetFisboneInfo() {
@@ -427,6 +459,12 @@ public:
         // First packet will be included in the index, the cut off threshold
         // is then set relative to that.
 
+        if (gOptions.GetDumpKeyPackets() || gOptions.GetDumpPackets()) {
+          cout << "[V] sample time_ms=[" << start_time << "," << end_time
+               << "] granulepos=[" << start_granule << ","
+               << packet.granulepos << "]" << endl;
+        }    
+
         if (start_time > mNextKeyframeThreshold) {
           mKeyFrames.push_back(KeyFrameInfo(offset, start_time, Checksum(page)));
           mNextKeyframeThreshold = Time(ogg_page_granulepos(page)) +
@@ -445,8 +483,7 @@ public:
   } // Decode()
 
   virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
-    assert(GotAllHeaders());
-    return Time(granulepos);
+    return (!GotAllHeaders()) ? -1 : Time(granulepos);
   }
 
   virtual bool GotAllHeaders() {

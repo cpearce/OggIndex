@@ -107,6 +107,10 @@ int TheoraVersion(th_info* info,
                   unsigned char min,
                   unsigned char sub);
 
+
+// Returns the number of packets that start on a page.
+int CountPacketStarts(ogg_page* page);
+
 #define SKELETON_VERSION(major, minor) (((major)<<16)|(minor))
 
 // Returns true if the file has an accurate Skeleton3.1 Index track.
