@@ -93,16 +93,20 @@ private:
   ogg_int64_t mFrameDuration;
   ogg_int64_t mGranulepos;
 
+  ogg_int64_t Time(ogg_int64_t granulepos) {
+    ogg_int64_t frame_index = th_granule_frame(mCtx, granulepos);
+    ogg_int64_t start_time = (1000 * mInfo.fps_denominator * frame_index) /
+                              mInfo.fps_numerator;
+    return start_time;
+  }
+
   ogg_int64_t NextKeyframeTime() {
     while (mBuffer.size() > 0 && mBuffer.front().granulepos != -1) {
       PacketInfo p = mBuffer.front();
       mBuffer.pop_front();
       if (p.isKeyFrame) {
         assert(p.granulepos != -1);
-        ogg_int64_t frame_index = th_granule_frame(mCtx, p.granulepos);
-        ogg_int64_t start_time = (1000 * mInfo.fps_denominator * frame_index) /
-                                  mInfo.fps_numerator;
-        return start_time;
+        return Time(p.granulepos);
       }
     }
     return -1;
@@ -141,9 +145,8 @@ public:
   
   virtual const char* Type() { return "theora"; }
 
-  // Decode all keyframes in the given page, and return the [start,end] range
-  // encompases by all keyframes on this page, even if they're interleaved with
-  // non-keyframes.
+  // Decode all keyframes in the given page, and return the start time of
+  // the next keyframe.
   virtual ogg_int64_t Decode(ogg_page* page) {
     if ((ogg_uint32_t)ogg_page_serialno(page) != mSerial) {
       return -1;
@@ -228,15 +231,26 @@ public:
           granulepos =
             (th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1) - 1) << shift;
         } else {
-          granulepos = prev->granulepos - 1;
-        }
-        if (p->granulepos != -1 &&
-          th_granule_frame(mCtx, p->granulepos) + TheoraVersion(&mInfo,3,2,1) !=
-          th_granule_frame(mCtx, prev->granulepos) + TheoraVersion(&mInfo,3,2,1)- 1)
-        {
-          cerr << "ERROR: I've miscalculated granulepos!" << endl;
+          if (prev->isKeyFrame) {
+            // The previous frame is a keyframe, so we can't just subtract 1
+            // from the "keyframe offset" part of its granulepos, as it
+            // doesn't have one! So fake it, take the keyframe offset as the
+            // max possible keyframe offset. This means the granulepos claims
+            // that it depends on the wrong keyframe, but at least its granule
+            // number will be correct, so the times we calculate from this
+            // granulepos will also be correct.
+            ogg_int64_t max_offset = (ogg_int64_t)(1 << shift) - 1;
+            ogg_int64_t granule = th_granule_frame(mCtx, prev->granulepos) +
+                                  TheoraVersion(&mInfo,3,2,1) - 1 - max_offset;
+            granulepos = (granule << shift) + max_offset;
+          } else {
+            granulepos = prev->granulepos - 1;
+          }
         }
         p->granulepos = granulepos;
+        assert(th_granule_frame(mCtx, p->granulepos) ==
+               th_granule_frame(mCtx, prev->granulepos) - 1);
+        assert(Time(p->granulepos) < Time(prev->granulepos));
         prev = p;
         rev_itr++;
       }
@@ -246,6 +260,8 @@ public:
       ogg_int64_t time = NextKeyframeTime();
       if (time != -1) {
         start_time = min(time, start_time);
+        ogg_int64_t page_end_time = Time(ogg_page_granulepos(page));
+        assert(time <= page_end_time);
       }        
     }
    
