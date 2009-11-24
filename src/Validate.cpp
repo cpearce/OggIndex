@@ -37,6 +37,8 @@
  */
  
 #include <list>
+#include <limits.h>
+#include <stdlib.h>
 #include <ogg/ogg.h>
 #include <theora/theora.h>
 #include <theora/theoradec.h>
@@ -119,8 +121,8 @@ private:
 public:
   Theora(ogg_uint32_t serial)
     : VerifyDecoder(serial)
-    , mHeaderPacketsRead(0)
     , mSetup(0)
+    , mHeaderPacketsRead(0)
   {
     th_info_init(&mInfo);
     th_comment_init(&mComment);
@@ -143,7 +145,7 @@ public:
   // encompases by all keyframes on this page, even if they're interleaved with
   // non-keyframes.
   virtual ogg_int64_t Decode(ogg_page* page) {
-    if (ogg_page_serialno(page) != mSerial) {
+    if ((ogg_uint32_t)ogg_page_serialno(page) != mSerial) {
       return -1;
     }
     ogg_int64_t start_time = INT_MAX;
@@ -282,13 +284,11 @@ public:
   virtual ogg_int64_t Decode(ogg_page* page) {
     assert(!ogg_page_continued(page));
     ogg_packet op;
-    ogg_int64_t time = 0;
     assert(ogg_stream_packetout(&mStreamState, &op) == 0);
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
     int total_samples = 0;
     ogg_int64_t start_time = -1;
-    const int preroll_packets = 2;
     int packet_count = 0;
     while (ogg_stream_packetout(&mStreamState, &op) == 1) {
       packet_count++;
@@ -441,7 +441,6 @@ bool ValidateIndexedOgg(const string& filename) {
   Theora* theora = 0;
   Vorbis* vorbis = 0;
   Skeleton* skeleton = 0;
-  ogg_int64_t end_time = -1;
   bool index_valid = true;
   
   while (!ReadAllHeaders(theora, vorbis, skeleton) && 
@@ -554,7 +553,7 @@ bool ValidateIndexedOgg(const string& filename) {
         }
         // Extract the presentation time. Decode() returns -1 if it needs
         // another page.
-        if (ogg_page_serialno(&page) != decoder->mSerial) {
+        if ((ogg_uint32_t)ogg_page_serialno(&page) != decoder->mSerial) {
           // Skip until we read another page on this stream.
           continue;
         }

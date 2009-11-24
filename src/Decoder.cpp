@@ -40,6 +40,8 @@
 #include <iostream>
 #include <fstream>
 #include <string.h>
+#include <limits.h>
+#include <stdlib.h>
 #include <ogg/ogg.h>
 #include <theora/theora.h>
 #include <theora/theoradec.h>
@@ -75,7 +77,19 @@ Decoder::~Decoder() {
   ogg_stream_clear(&mState);
 }
 
-class TheoraDecoder : public Decoder { 
+class TheoraDecoder : public Decoder {
+protected:
+
+  th_info mInfo;
+  th_comment mComment;
+  th_setup_info *mSetup;
+  th_dec_ctx* mCtx;
+
+  ogg_int32_t mHeadersRead;
+  ogg_int64_t mPacketCount; 
+
+  bool mSetFirstGranulepos;
+
 public:
 
   ogg_int64_t mNextKeyframeThreshold; // in ms
@@ -86,10 +100,10 @@ public:
     mSetup(0),
     mCtx(0),
     mHeadersRead(0),
-    mSetFirstGranulepos(false),
     mPacketCount(0),
-    mGranulepos(-1),
-    mNextKeyframeThreshold(-INT_MAX)
+    mSetFirstGranulepos(false),
+    mNextKeyframeThreshold(-INT_MAX),
+    mGranulepos(-1)
   {
     th_info_init(&mInfo);
     th_comment_init(&mComment);
@@ -147,8 +161,8 @@ public:
     // Packetno of the last packet which has started. 2 is the packetno of
     // the last header packet.
     ogg_int64_t started_packetno = 2;
-    unsigned pageno = 0;
-    int prev_keyframe_pageno = -INT_MAX;
+    ogg_int64_t pageno = 0;
+    ogg_int64_t prev_keyframe_pageno = -INT_MAX;
     ogg_int64_t prev_keyframe_start_time = -INT_MAX;
     for (unsigned f=0; f<mFrames.size(); f++) {
       Frame& frame = mFrames[f];
@@ -196,7 +210,7 @@ public:
   }
 
   bool Decode(ogg_page* page, ogg_int64_t offset) {
-    assert(ogg_page_serialno(page) == mSerial);
+    assert((ogg_uint32_t)ogg_page_serialno(page) == mSerial);
     if (GotAllHeaders()) {
       Page record;
       record.checksum = Checksum(page);
@@ -357,18 +371,6 @@ public:
     assert(f.mContentType.size() == 28);
     return f;
   }
-
-protected:
-
-  th_info mInfo;
-  th_comment mComment;
-  th_setup_info *mSetup;
-  th_dec_ctx* mCtx;
-
-  ogg_int32_t mHeadersRead;
-  ogg_int64_t mPacketCount; 
-
-  bool mSetFirstGranulepos;
 };
 
 class VorbisDecoder : public Decoder {
@@ -536,7 +538,6 @@ IsSkeletonPacket(ogg_packet* packet)
 
 bool SkeletonDecoder::Decode(ogg_page* page, ogg_int64_t offset) {
   int ret = ogg_stream_pagein(&mState, page);
-  ogg_int64_t granulepos = ogg_page_granulepos(page);
   assert(ret == 0);
 
   ogg_packet packet;
@@ -594,7 +595,6 @@ Decoder* Decoder::Create(ogg_page* page)
 {
   assert(ogg_page_bos(page));
   ogg_uint32_t serialno = ogg_page_serialno(page);
-  Decoder* decoder = 0;
   if (page->body_len > 8 &&
       strncmp("theora", (const char*)page->body+1, 6) == 0)
   {

@@ -90,14 +90,24 @@ GetUniqueSerialNo(vector<Decoder*>& decoders)
   return serialno;
 }
 
+/*
+  vector<Decoder*> mDecoders;
+  SkeletonDecoder* mSkeletonDecoder;
+  ogg_int64_t mFileLength;
+  ogg_int64_t mOldSkeletonLength;
+  ogg_uint32_t mSerial;
+  ogg_int32_t mPacketCount;
+  vector<ogg_packet*> mIndexPackets;
+  vector<ogg_page*> mIndexPages;
+*/
 
 SkeletonEncoder::SkeletonEncoder(DecoderMap& decoders,
                                  ogg_int64_t fileLength,
                                  ogg_int64_t oldSkeletonLength)
-  : mFileLength(fileLength),
+  : mSkeletonDecoder(0),
+    mFileLength(fileLength),
     mOldSkeletonLength(oldSkeletonLength),
-    mPacketCount(0),
-    mSkeletonDecoder(0)
+    mPacketCount(0)
 {
   DecoderMap::iterator itr = decoders.begin();
   while (itr != decoders.end()) {
@@ -227,31 +237,6 @@ SkeletonEncoder::AddEosPacket() {
   mIndexPackets.push_back(eos);
 }
 
-// Compare function, used to sort index vector of packets.
-// returns true if a is before b.
-static bool
-compare_index_packet(ogg_packet* a, ogg_packet* b)
-{
-  ogg_uint32_t aSerial = LEUint32(a->packet);
-  ogg_uint32_t bSerial = LEUint32(b->packet);
-  return aSerial < bSerial;
-}
-
-static bool
-IsSorted(vector<ogg_packet*>& indexes)
-{
-  for (ogg_uint32_t i=1; i<indexes.size(); i++) {
-    ogg_packet* prev = indexes[i-1];
-    ogg_packet* here = indexes[i];
-    ogg_uint32_t prevSerial = LEUint32(prev->packet + HEADER_MAGIC_LEN);
-    ogg_uint32_t hereSerial = LEUint32(here->packet + HEADER_MAGIC_LEN);
-    assert(prevSerial < hereSerial);
-    if (prevSerial >= hereSerial)
-      return false;
-  }
-  return true;
-}
-
 void
 SkeletonEncoder::ConstructIndexPackets() {
   assert(mIndexPackets.size() > 0);
@@ -313,7 +298,6 @@ SkeletonEncoder::ConstructPages() {
   ogg_stream_state state;
   memset(&state, 0, sizeof(ogg_stream_state));
   memset(&page, 0, sizeof(ogg_page));
-  ogg_int64_t length = 0;
   
   ret = ogg_stream_init(&state, mSerial);
   assert(ret == 0);

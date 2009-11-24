@@ -74,13 +74,9 @@ int main(int argc, char** argv)
   ogg_page page;
   memset(&page, 0, sizeof(ogg_page));
 
-  time_t startTime = time(0);
-
   ogg_uint64_t bytesRead = 0;
-  ogg_uint64_t offset = 0;
+  ogg_int64_t offset = 0;
   ogg_uint32_t pageNumber = 0;
-  ogg_uint64_t insertionPoint = -1;
-  ogg_uint64_t skeletonBosPageLen = 0;
   bool gotAllHeaders = false;
   ogg_uint64_t endOfHeaders = 0;
   ogg_uint64_t oldSkeletonLength = 0;
@@ -119,7 +115,6 @@ int main(int argc, char** argv)
     }
 
     decoder->Decode(&page, offset);
-    ogg_uint32_t oldSkelentonLength = 0;
     
     if (!gotAllHeaders) {
       gotAllHeaders = true;
@@ -148,7 +143,7 @@ int main(int argc, char** argv)
     memset(&page, 0, sizeof(ogg_page));
   }
 
-  const ogg_uint64_t fileLength = bytesRead;
+  const ogg_int64_t fileLength = bytesRead;
   assert(input.eof());
   if (offset != fileLength) {
     cerr << "WARNING: Ogg page lengths don't sum to file length!" << endl;

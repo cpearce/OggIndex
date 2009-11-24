@@ -59,8 +59,8 @@ class FisboneInfo {
 public:
   
   FisboneInfo()
-    : mGranDenom(0)
-    , mGranNumer(0)
+    : mGranNumer(0)
+    , mGranDenom(0)
     , mPreroll(0)
     , mGranuleShift(0)
   {}

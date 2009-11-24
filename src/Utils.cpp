@@ -105,7 +105,7 @@ bool
 IsIndexPacket(ogg_packet* packet)
 {
   return packet &&
-         packet->bytes > HEADER_MAGIC_LEN + 8 &&
+         packet->bytes > (long)(HEADER_MAGIC_LEN + 8) &&
          memcmp(packet->packet, HEADER_MAGIC, HEADER_MAGIC_LEN) == 0;
 }
 
@@ -346,7 +346,7 @@ LEUint32(unsigned const char* p) {
   return i;  
 }
 
-static ogg_int32_t
+ogg_int32_t
 LEInt32(unsigned const char* p) {
   ogg_int32_t i =  p[0] +
              (p[1] << 8) + 

@@ -125,7 +125,7 @@ LEInt64(unsigned char* p);
 ogg_uint32_t
 LEUint32(unsigned const char* p);
 
-static ogg_int32_t
+ogg_int32_t
 LEInt32(unsigned const char* p);
 
 ogg_uint16_t
