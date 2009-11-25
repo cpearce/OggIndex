@@ -239,9 +239,11 @@ public:
             // that it depends on the wrong keyframe, but at least its granule
             // number will be correct, so the times we calculate from this
             // granulepos will also be correct.
-            ogg_int64_t max_offset = (ogg_int64_t)(1 << shift) - 1;
-            ogg_int64_t granule = th_granule_frame(mCtx, prev->granulepos) +
+            ogg_int64_t frameno = th_granule_frame(mCtx, prev->granulepos);
+            ogg_int64_t max_offset = min((frameno - 1), (ogg_int64_t)(1 << shift) - 1);
+            ogg_int64_t granule = frameno +
                                   TheoraVersion(&mInfo,3,2,1) - 1 - max_offset;
+            assert(granule > 0);
             granulepos = (granule << shift) + max_offset;
           } else {
             granulepos = prev->granulepos - 1;
@@ -292,7 +294,7 @@ public:
     assert(ogg_stream_packetout(&mStreamState, &op) == 0);
     if (mReadHeaders) {
       vorbis_synthesis_restart(&mDsp);
-     }
+    }
   }
 
   virtual const char* Type() { return "vorbis"; }
