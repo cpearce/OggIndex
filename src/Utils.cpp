@@ -105,7 +105,7 @@ bool
 IsIndexPacket(ogg_packet* packet)
 {
   return packet &&
-         packet->bytes > (long)(HEADER_MAGIC_LEN + 8) &&
+         packet->bytes >= (long)(HEADER_MAGIC_LEN + 8) &&
          memcmp(packet->packet, HEADER_MAGIC, HEADER_MAGIC_LEN) == 0;
 }
 

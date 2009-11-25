@@ -382,8 +382,14 @@ public:
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
     ogg_packet op;
-    while (ogg_stream_packetout(&mStreamState, &op) == 1) {
+    int packets_decoded = 0;
+    while ((ret = ogg_stream_packetout(&mStreamState, &op)) != 0) {
+      packets_decoded++;
       assert(!mReadHeaders);
+      if (ret != 1) {
+        cout << "WARNING: out of sync while reading skeleton packets!" << endl;
+        continue;
+      }
 
       if (IsFisheadPacket(&op)) {
         ogg_uint16_t ver_maj = LEUint16(op.packet + 8);
@@ -407,7 +413,7 @@ public:
                << ") <= start_time (" << mStartTime << ")." << endl;
           return false;
         }
-                
+        
         continue;
       }
       
@@ -428,8 +434,15 @@ public:
       if (op.e_o_s) {
         assert(ogg_page_eos(page) != 0);
         mReadHeaders = true;
+        continue;
       }
+
+      cout << "WARNING: Unknown packet in skeleton track!" << endl;
     }  
+    if (packets_decoded != ogg_page_packets(page)) {
+      cout << "WARNING: Only decoded " << packets_decoded << " packets from "
+           << "skeleon page, but expected " << ogg_page_packets(page) << endl;
+    }
     return true;
   }
 };
