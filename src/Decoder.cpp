@@ -378,6 +378,7 @@ public:
 
   VorbisDecoder(ogg_uint32_t serial) :
     Decoder(serial),
+    mNextKeyframeThreshold(-INT_MAX),
     mHeadersRead(0)
   {
     vorbis_info_init(&mInfo);

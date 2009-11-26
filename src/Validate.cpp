@@ -67,7 +67,7 @@ public:
     ogg_stream_clear(&mStreamState);
   }
   
-  virtual ogg_int64_t Decode(ogg_page* page) = 0;
+  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) = 0;
   
   virtual void Reset() = 0;
   
@@ -147,7 +147,8 @@ public:
 
   // Decode all keyframes in the given page, and return the start time of
   // the next keyframe.
-  virtual ogg_int64_t Decode(ogg_page* page) {
+  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+    end_time = -1;
     if ((ogg_uint32_t)ogg_page_serialno(page) != mSerial) {
       return -1;
     }
@@ -262,6 +263,7 @@ public:
       ogg_int64_t time = NextKeyframeTime();
       if (time != -1) {
         start_time = min(time, start_time);
+        end_time = start_time + mFrameDuration;
         ogg_int64_t page_end_time = Time(ogg_page_granulepos(page));
         assert(time <= page_end_time);
       }        
@@ -299,7 +301,7 @@ public:
 
   virtual const char* Type() { return "vorbis"; }
 
-  virtual ogg_int64_t Decode(ogg_page* page) {
+  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
     assert(!ogg_page_continued(page));
     ogg_packet op;
     assert(ogg_stream_packetout(&mStreamState, &op) == 0);
@@ -345,6 +347,7 @@ public:
         assert(op.granulepos == ogg_page_granulepos(page));
         ogg_int64_t start_granule = op.granulepos - total_samples;
         start_time = (1000 * start_granule) / mDsp.vi->rate;
+        end_time = (1000 * ogg_page_granulepos(page)) / mDsp.vi->rate;
       }
     }
 
@@ -380,7 +383,8 @@ public:
   
   virtual const char* Type() { return "skeleton"; }
 
-  virtual ogg_int64_t Decode(ogg_page* page) {
+  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+    end_time = -1;
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
     ogg_packet op;
@@ -502,7 +506,8 @@ bool ValidateIndexedOgg(const string& filename) {
       cout << "WARNING: Unknown stream type, serialno=" << serialno << endl;
       continue;
     }
-    if (!decoder->Decode(&page)) {
+    ogg_int64_t ignore;
+    if (!decoder->Decode(&page, ignore)) {
       index_valid = false;
     }
   }
@@ -523,21 +528,21 @@ bool ValidateIndexedOgg(const string& filename) {
     vector<KeyFrameInfo>* v = itr->second;
     ogg_uint32_t serialno = itr->first;
     itr++;
+    VerifyDecoder* decoder = decoders[serialno];
 
     if (v->size() == 0) {
-      cerr << "WARNING: Index for track s=" << serialno << " has no keyframes" << endl;
+      cerr << "WARNING: Index for " << decoder->Type() << " track s="
+           << serialno << " has no keyframes" << endl;
       continue;
     }
-    
-    bool valid = true;
-    VerifyDecoder* decoder = decoders[serialno];
+
     cout << "Index for " << decoder->Type()
          << " track serialno=" << serialno << ", " << v->size() << " keypoints." << endl;
 
+    bool valid = true;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
     
       KeyFrameInfo& keypoint = v->at(i);
-
       if (keypoint.mOffset > INT_MAX) {
         cerr << "WARNING: Only verified up to 2^31 bytes into the file." << endl;
         break;
@@ -545,10 +550,11 @@ bool ValidateIndexedOgg(const string& filename) {
       
       if (keypoint.mOffset > fileLength) {
         valid = false;
-        cerr << "Verification failure: keypoint offset out of file range." << endl;
+        cerr << "FAIL: Keypoint " << i << " offset of " << keypoint.mOffset
+             << " out of file range." << endl;
         break;
       }
-      
+
       // Check that the checksum of the page here matches, and that the
       // presentation time of the stream matches what's reported in the index.
       ogg_sync_reset(&state);
@@ -567,7 +573,7 @@ bool ValidateIndexedOgg(const string& filename) {
       ogg_int64_t pres_time = -1;
       bool checksum_checked = false;
       ogg_int64_t page_offset = keypoint.mOffset;
-      bool second_try = false;
+      ogg_int64_t end_time = -1;
       while (pres_time  == -1) {
         if (!ReadPage(&state, &page, input, bytesRead)) {
           cerr << "FAIL: Can't read page at offset " << page_offset << endl;
@@ -577,7 +583,7 @@ bool ValidateIndexedOgg(const string& filename) {
         if (!checksum_checked) {
           checksum_checked = true;
           if (GetChecksum(&page) != keypoint.mChecksum) {
-            cerr << "Verification failure: Incorrect checksum for page at byte offset "
+            cerr << "FAIL: Incorrect checksum for page at byte offset "
                  << keypoint.mOffset << endl;
             valid = false;
           }
@@ -588,33 +594,32 @@ bool ValidateIndexedOgg(const string& filename) {
           // Skip until we read another page on this stream.
           continue;
         }
-        pres_time = decoder->Decode(&page);
+        pres_time = decoder->Decode(&page, end_time);
         // Vorbis decoders should never return -1 for prestime, it should be
         // calculable from only one page.
         assert(decoder != vorbis || pres_time != -1);
       }
 
-      // We consider that the key point is invalid if it's reported time
+      // We consider a theora the key point is invalid if it's reported time
       // doesn't match the presentation time of the first keyframe which
       // can be decoded from this page.
-      if (keypoint.mTime != pres_time) {
-        cerr << "FAIL: keypoint " << i << " for page at offset " << keypoint.mOffset
-             << " reports start time of " << keypoint.mTime << " but should be "
-             << pres_time << endl;
+      if (decoder == theora && keypoint.mTime != pres_time) {
+        cerr << "FAIL: theora keypoint " << i << " for page at offset "
+             << keypoint.mOffset << " reports start time of "
+             << keypoint.mTime << " but should be " << pres_time << endl;
         valid = false;
-        if (!second_try) {
-          // Try to read another page, to see if the keyframe actually occurs
-          // on the next page. The file is still technically invalid, but it's
-          // helpful to know that it's off-by-one...
-          pres_time = -1;
-          second_try = true;
-        } else {
-          break;
-        }
       }
-      if (second_try) {
-        cerr << "FAIL: keypoint " << i << " begins on the page after it's "
-             << "reported as beginning on!" << endl;
+
+      // A vorbis keypoint is considered invalid if lies before the start time
+      // of this page, or after the end time.
+      if (decoder == vorbis &&
+          (keypoint.mTime < pres_time || keypoint.mTime > end_time))
+      {
+        cerr << "FAIL: vorbis keypoint " << i << " for page at offset "
+             << keypoint.mOffset << " reports start time of "
+             << keypoint.mTime << " but should lie in the range ["
+             << pres_time << "," << end_time << "]" << endl;
+        valid = false;
       }
     }
     if (valid) {
