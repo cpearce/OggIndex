@@ -1,12 +1,14 @@
 OggIndex - Indexes ogg theora/vorbis files for faster seeking.
+OggIndexValid - Validates a file's keyframe index.
 
-See IndexSpecificationVersion1.txt for index format details.
+See Skeleton-3.1-Index-Specification.txt for index format details.
 
 BUILDING ON LINUX
 
 To build on Linux you require the ogg, theora and vorbis libraries to be 
-installed. Provided those libraries are installed, building should be as 
-simple as running "build-indexer.sh".
+installed. Provided those libraries are installed, building the indexer
+should be as simple as running "build-indexer.sh". To build the validator
+run "build-validtor.sh".
 
 BUILDING ON WINDOWS
 
@@ -14,4 +16,5 @@ To build on Windows, use the Visual Studio 2005 solution at
 win32/VS2005/OggIndex.sln. You must have the ogg, theora and vorbis 
 libraries available in OggIndex's parent directory, e.g. the theora, 
 vorbis and ogg directories containing those libraries should be in the 
-same directory as the OggIndex directory.
+same directory as the OggIndex directory. Build the OggIndex project
+to build the indexer, and OggIndexValid to build the validator.
