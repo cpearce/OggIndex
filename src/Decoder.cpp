@@ -95,6 +95,9 @@ public:
   ogg_int64_t mNextKeyframeThreshold; // in ms
   ogg_int64_t mGranulepos;
 
+  // Records the packetno of the first complete non-header packet in the stream.
+  ogg_int64_t mFirstPacketno;
+
   TheoraDecoder(ogg_uint32_t serial) :
     Decoder(serial),
     mSetup(0),
@@ -103,7 +106,8 @@ public:
     mPacketCount(0),
     mSetFirstGranulepos(false),
     mNextKeyframeThreshold(-INT_MAX),
-    mGranulepos(-1)
+    mGranulepos(-1),
+    mFirstPacketno(-1)
   {
     th_info_init(&mInfo);
     th_comment_init(&mComment);
@@ -158,9 +162,10 @@ public:
     // Construct list of keyframes from page and frame info lists.
     // Need to determine frame start offsets and fill key points array.
 
-    // Packetno of the last packet which has started. 2 is the packetno of
-    // the last header packet.
-    ogg_int64_t started_packetno = 2;
+    // Packetno of the last packet which has started.
+    ogg_int64_t started_packetno = mFirstPacketno - 1;
+    // Must at least have header packets.
+    assert(started_packetno >= 2);
     ogg_int64_t pageno = 0;
     ogg_int64_t prev_keyframe_pageno = -INT_MAX;
     ogg_int64_t prev_keyframe_start_time = -INT_MAX;
@@ -250,6 +255,10 @@ public:
         }
         continue;
       }      
+
+      if (mFirstPacketno == -1) {
+        mFirstPacketno = packet.packetno;
+      }
       
       int shift = mInfo.keyframe_granule_shift;
       if (mGranulepos == -1) {
