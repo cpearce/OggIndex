@@ -55,10 +55,9 @@ using namespace std;
 
 #define SKELETON_3_0_HEADER_LENGTH 64
 #define SKELETON_3_1_HEADER_LENGTH 88
-#define FISBONE_3_1_PACKET_SIZE 80
 #define FISBONE_MAGIC "fisbone"
 #define FISBONE_MAGIC_LEN (sizeof(FISBONE_MAGIC) / sizeof(FISBONE_MAGIC[0]))
-#define FISBONE_SIZE 52
+#define FISBONE_BASE_SIZE 52
 #define FISBONE_MESSAGE_HEADER_OFFSET 44
 
 
@@ -428,11 +427,14 @@ SkeletonEncoder::AddFisbonePackets() {
   } else {
     // Have to construct fisbone packets.
     for (ogg_uint32_t i=0; i<mDecoders.size(); i++) {
+      FisboneInfo info = mDecoders[i]->GetFisboneInfo();
+      unsigned packetSize = FISBONE_BASE_SIZE + (unsigned)info.mContentType.size();
+
       ogg_packet* packet = new ogg_packet();
       memset(packet, 0, sizeof(ogg_packet));
       
-      packet->packet = new unsigned char[FISBONE_3_1_PACKET_SIZE];
-      memset(packet->packet, 0, FISBONE_3_1_PACKET_SIZE);
+      packet->packet = new unsigned char[packetSize];
+      memset(packet->packet, 0, packetSize);
 
       // Magic bytes identifier.
       memcpy(packet->packet, FISBONE_MAGIC, FISBONE_MAGIC_LEN);
@@ -445,8 +447,6 @@ SkeletonEncoder::AddFisbonePackets() {
       
       // Number of header packets. 3 for both vorbis and theora.
       WriteLEUint32(packet->packet+16, 3);
-      
-      FisboneInfo info = mDecoders[i]->GetFisboneInfo();
       
       // Granulrate numerator.
       WriteLEInt64(packet->packet+20, info.mGranNumer);
@@ -464,13 +464,13 @@ SkeletonEncoder::AddFisbonePackets() {
       WriteLEUint32(packet->packet+48, info.mGranuleShift);
 
       // Message header field, Content-Type */
-      memcpy(packet->packet+FISBONE_SIZE,
+      memcpy(packet->packet+FISBONE_BASE_SIZE,
              info.mContentType.c_str(),
              info.mContentType.size());
 
       packet->b_o_s = 0;
       packet->e_o_s = 0;
-      packet->bytes = 80;
+      packet->bytes = packetSize;
 
       packet->packetno = mPacketCount;      
       mIndexPackets.push_back(packet);
