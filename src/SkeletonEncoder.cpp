@@ -125,7 +125,7 @@ SkeletonEncoder::SkeletonEncoder(DecoderMap& decoders,
 
 SkeletonEncoder::~SkeletonEncoder() {
   for (ogg_uint32_t i=0; i<mIndexPackets.size(); i++) {
-    delete mIndexPackets[i]->packet;
+    delete[] mIndexPackets[i]->packet;
     delete mIndexPackets[i];
   }
   ClearIndexPages();

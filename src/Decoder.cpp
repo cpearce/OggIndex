@@ -520,7 +520,7 @@ SkeletonDecoder::SkeletonDecoder(ogg_uint32_t serial) :
   mGotAllHeaders(0)    
 {
   for (ogg_uint32_t i=0; i<mPackets.size(); i++) {
-    delete mPackets[i]->packet;
+    delete[] mPackets[i]->packet;
     mPackets[i]->packet = 0;
     delete mPackets[i];
   }

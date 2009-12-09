@@ -64,7 +64,7 @@ Clone(ogg_page* p)
 void
 FreeClone(ogg_page* p)
 {
-  delete p->header;
+  delete[] p->header;
   delete p;
 }
 
@@ -160,7 +160,7 @@ IsPageAtOffset(const string& filename, ogg_int64_t offset, ogg_page* page)
   if (memcmp(buf, page->header, page->header_len) != 0) {
     cerr << "Incorrect page offset calculation for page at offset "
          << offset << endl;
-    delete buf;
+    delete[] buf;
     return false;
   }
   
@@ -169,11 +169,11 @@ IsPageAtOffset(const string& filename, ogg_int64_t offset, ogg_page* page)
   if (memcmp(buf, page->body, page->body_len) != 0) {
     cerr << "Incorrect page offset calculation for page at offset "
          << offset << endl;
-    delete buf;
+    delete[] buf;
     return false;
   }
 
-  delete buf;
+  delete[] buf;
   return true;
 }
 
@@ -196,7 +196,7 @@ CopyFileData(istream& input, ostream& output, ogg_int64_t bytesToCopy)
     output.write(buf, x);
     bytesCopied += x;
   }
-  delete buf;
+  delete[] buf;
 }
 
 ogg_uint32_t
