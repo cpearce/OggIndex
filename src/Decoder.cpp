@@ -413,8 +413,6 @@ public:
   }
 
   bool Decode(ogg_page* page, ogg_int64_t offset) {
-    assert(!ogg_page_continued(page));
-
     ogg_stream_reset(&mState);
     if (GotAllHeaders()) {
       // Reset the vorbis syntheis. This simulates what happens when we seek
