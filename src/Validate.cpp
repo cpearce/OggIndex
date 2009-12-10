@@ -302,7 +302,6 @@ public:
   virtual const char* Type() { return "vorbis"; }
 
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
-    assert(!ogg_page_continued(page));
     ogg_packet op;
     assert(ogg_stream_packetout(&mStreamState, &op) == 0);
     int ret = ogg_stream_pagein(&mStreamState, page);
