@@ -411,11 +411,11 @@ public:
         // TODO: How can I validate these further?
         ogg_int64_t start_num = LEUint64(op.packet + SKELETON_FIRST_NUMER_OFFSET);
         ogg_int64_t start_denom = LEUint64(op.packet + SKELETON_FIRST_DENOM_OFFSET);
-        mStartTime = (start_num * 1000) / start_denom;
+        mStartTime = (start_denom == 0) ? -1 : (start_num * 1000) / start_denom;
 
         ogg_int64_t last_num = LEUint64(op.packet + SKELETON_LAST_NUMER_OFFSET);
         ogg_int64_t last_denom = LEUint64(op.packet + SKELETON_LAST_DENOM_OFFSET);
-        mEndTime = (last_num * 1000) / last_denom;
+        mEndTime = (last_denom == 0) ? -1 : (last_num * 1000) / last_denom;
 
         mFileLength = LEUint64(op.packet + SKELETON_FILE_LENGTH_OFFSET);
 

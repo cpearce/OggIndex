@@ -639,6 +639,12 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
     return false;
   }
 
+  if (time_denom == 0) {
+    cerr << "WARNING: Index packet for stream " << serialno
+         << " has 0 timestamp denominator." << endl;
+    return false;
+  }
+
   vector<KeyFrameInfo>* keypoints = new vector<KeyFrameInfo>();
   keypoints->reserve(numKeyPoints);
     
