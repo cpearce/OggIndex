@@ -397,8 +397,8 @@ public:
       }
 
       if (IsFisheadPacket(&op)) {
-        ogg_uint16_t ver_maj = LEUint16(op.packet + 8);
-        ogg_uint16_t ver_min = LEUint16(op.packet + 10);
+        ogg_uint16_t ver_maj = LEUint16(op.packet + SKELETON_VERSION_MAJOR_OFFSET);
+        ogg_uint16_t ver_min = LEUint16(op.packet + SKELETON_VERSION_MINOR_OFFSET);
         ogg_uint32_t version = SKELETON_VERSION(ver_maj, ver_min);
         if (version < SKELETON_VERSION(3,0) ||
             version >= SKELETON_VERSION(4,0)) { 
@@ -409,9 +409,15 @@ public:
 
         // Decode the 3.1 header fields, for validation later.
         // TODO: How can I validate these further?
-        mStartTime = LEUint64(op.packet+64);
-        mEndTime = LEUint64(op.packet+72);
-        mFileLength = LEUint64(op.packet+80);
+        ogg_int64_t start_num = LEUint64(op.packet + SKELETON_FIRST_NUMER_OFFSET);
+        ogg_int64_t start_denom = LEUint64(op.packet + SKELETON_FIRST_DENOM_OFFSET);
+        mStartTime = (start_num * 1000) / start_denom;
+
+        ogg_int64_t last_num = LEUint64(op.packet + SKELETON_LAST_NUMER_OFFSET);
+        ogg_int64_t last_denom = LEUint64(op.packet + SKELETON_LAST_DENOM_OFFSET);
+        mEndTime = (last_num * 1000) / last_denom;
+
+        mFileLength = LEUint64(op.packet + SKELETON_FILE_LENGTH_OFFSET);
 
         if (mEndTime <= mStartTime) {
           cerr << "Verification Failure: end_time (" << mEndTime
@@ -431,7 +437,6 @@ public:
         bool r = DecodeIndex(mIndex, &op);
         if (!r) {
           cerr << "FAIL: Can't parse skeleton index packet." << endl;
-          return false;
         }
         continue;
       }

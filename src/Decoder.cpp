@@ -564,20 +564,19 @@ bool SkeletonDecoder::Decode(ogg_page* page, ogg_int64_t offset) {
     assert(ret == 1);
     num_packets++;
 
-    if (!IsSkeletonPacket(&packet)) {
-      return false;
-    }
-
     if (IsIndexPacket(&packet)) {
       assert(!packet.e_o_s);
-      return ::DecodeIndex(mIndex, &packet);
-    } else {
+      if (!::DecodeIndex(mIndex, &packet)) {
+        cerr << "WARNING: Index packet " << packet.packetno << " of stream "
+             << ogg_page_serialno(page) << " failed to parse." << endl;
+      }
+    } else if (IsSkeletonPacket(&packet)) {
       assert(!IsIndexPacket(&packet));
       // Don't record index packets, we'll recompute them.
       mPackets.push_back(Clone(&packet));
     }
     
-    // Check if the skeleton version is 3.0+, fail otherwise.
+    // Check if the skeleton version is 3.x, fail otherwise.
     if (IsFisheadPacket(&packet)) {
       ogg_uint16_t ver_maj = LEUint16(packet.packet + 8);
       ogg_uint16_t ver_min = LEUint16(packet.packet + 10);
@@ -620,22 +619,23 @@ Decoder* Decoder::Create(ogg_page* page)
 }
 
 bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
- assert(IsIndexPacket(packet));
-  unsigned char* p = packet->packet + HEADER_MAGIC_LEN;
-  ogg_uint32_t serialno = LEUint32(p);
-  p += 4;
-  ogg_int32_t numKeyPoints = LEUint32(p);
-  p += 4;
+  assert(IsIndexPacket(packet));
+  ogg_uint32_t serialno = LEUint32(packet->packet + INDEX_SERIALNO_OFFSET);
+  ogg_int32_t numKeyPoints = LEUint32(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET);
+  ogg_int64_t time_denom = LEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET);
+  ogg_int64_t time_multiplier = 1000;
 
   // Check that the packet's not smaller or significantly larger than
   // we expect. These cases denote a malicious or invalid num_key_points
   // field.
-  ogg_int32_t expectedPacketSize = HEADER_MAGIC_LEN + 8 + numKeyPoints * KEY_POINT_SIZE;
-  ogg_int32_t actualNumPackets = (packet->bytes - HEADER_MAGIC_LEN - 8) / KEY_POINT_SIZE;
-  assert(((packet->bytes - HEADER_MAGIC_LEN - 8) % KEY_POINT_SIZE) == 0);
+  ogg_int32_t expectedPacketSize = INDEX_KEYPOINT_OFFSET + numKeyPoints * KEY_POINT_SIZE;
+  ogg_int32_t actualNumPackets = (packet->bytes - INDEX_KEYPOINT_OFFSET) / KEY_POINT_SIZE;
+  if (((packet->bytes - INDEX_KEYPOINT_OFFSET) % KEY_POINT_SIZE) != 0) {
+    cerr << "WARNING: index packet size is odd size, last keypoint is incomplete." << endl;
+  }
   if (packet->bytes < expectedPacketSize ||
       numKeyPoints > actualNumPackets) {
-    cerr << "WARNING: Possibly malicious number of keyframes detected in index packet." << endl;
+    cerr << "WARNING: Possibly malicious number of key points reported in index packet." << endl;
     return false;
   }
 
@@ -643,23 +643,21 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   keypoints->reserve(numKeyPoints);
     
   /* Read in key points. */
-  assert(p == packet->packet + 14);
   for (ogg_int32_t i=0; i<numKeyPoints; i++) {
+    unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET + (i * KEY_POINT_SIZE);
     assert(p < packet->packet + packet->bytes);
     ogg_uint64_t offset=0;
     ogg_uint32_t checksum=0;
     ogg_uint64_t time=0;
     
     offset = LEInt64(p);
-    p += 8;
 
     assert(p < packet->packet + packet->bytes);
-    checksum = LEUint32(p);
-    p += 4;
+    checksum = LEUint32(p + 8);
 
     assert(p < packet->packet + packet->bytes);
-    time = LEInt64(p);
-    p += 8;
+    time = LEInt64(p + 12);
+    time = (time * time_multiplier) / time_denom;    
     
     keypoints->push_back(KeyFrameInfo(offset, time, checksum));
   }
