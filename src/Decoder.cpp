@@ -413,11 +413,11 @@ public:
   }
 
   bool Decode(ogg_page* page, ogg_int64_t offset) {
-    ogg_stream_reset(&mState);
     if (GotAllHeaders()) {
       // Reset the vorbis syntheis. This simulates what happens when we seek
       // to this page and start decoding with no prior knowledge. This forces
       // the decoder to preroll again.
+      ogg_stream_reset(&mState);
       vorbis_synthesis_restart(&mDsp);
     }
 
