@@ -287,7 +287,11 @@ public:
           if (mFrames[i].is_keyframe) {
             ogg_int64_t frame = th_granule_frame(mCtx, prev_granulepos) +
                                 TheoraVersion(&mInfo,3,2,1) - 1;
-            assert(frame > 0);
+            // 3.2.0 streams store the frame index in the granule position.
+            // 3.2.1 and later store the frame count. th_granule_frame() returns
+            // the frame index, so |frame| can be 0 when we're theora version
+            // 3.2.0 or less.
+            assert(frame > 0 || !TheoraVersion(&mInfo,3,2,1));
             granulepos = frame << shift;
           } else {
             // We must be offset by more than 1 frame for this to work.
