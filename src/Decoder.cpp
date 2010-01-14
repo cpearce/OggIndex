@@ -625,14 +625,14 @@ Decoder* Decoder::Create(ogg_page* page)
 bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   assert(IsIndexPacket(packet));
   ogg_uint32_t serialno = LEUint32(packet->packet + INDEX_SERIALNO_OFFSET);
-  ogg_int32_t numKeyPoints = LEUint32(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET);
+  ogg_int64_t numKeyPoints = LEUint64(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET);
   ogg_int64_t time_denom = LEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET);
   ogg_int64_t time_multiplier = 1000;
 
   // Check that the packet's not smaller or significantly larger than
   // we expect. These cases denote a malicious or invalid num_key_points
   // field.
-  ogg_int32_t expectedPacketSize = INDEX_KEYPOINT_OFFSET + numKeyPoints * KEY_POINT_SIZE;
+  ogg_int64_t expectedPacketSize = INDEX_KEYPOINT_OFFSET + numKeyPoints * KEY_POINT_SIZE;
   ogg_int32_t actualNumPackets = (packet->bytes - INDEX_KEYPOINT_OFFSET) / KEY_POINT_SIZE;
   if (((packet->bytes - INDEX_KEYPOINT_OFFSET) % KEY_POINT_SIZE) != 0) {
     cerr << "WARNING: index packet size is odd size, last keypoint is incomplete." << endl;
@@ -640,6 +640,10 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   if (packet->bytes < expectedPacketSize ||
       numKeyPoints > actualNumPackets) {
     cerr << "WARNING: Possibly malicious number of key points reported in index packet." << endl;
+    return false;
+  }
+  if (expectedPacketSize > INT_MAX) {
+    cerr << "ERROR: I can't handle expeted index sizes greater than 2^32." << endl;
     return false;
   }
 
@@ -650,10 +654,10 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   }
 
   vector<KeyFrameInfo>* keypoints = new vector<KeyFrameInfo>();
-  keypoints->reserve(numKeyPoints);
+  keypoints->reserve((ogg_int32_t)numKeyPoints);
     
   /* Read in key points. */
-  for (ogg_int32_t i=0; i<numKeyPoints; i++) {
+  for (ogg_int64_t i=0; i<numKeyPoints; i++) {
     unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET + (i * KEY_POINT_SIZE);
     assert(p < packet->packet + packet->bytes);
     ogg_uint64_t offset=0;

@@ -54,7 +54,7 @@ using namespace std;
 
 
 #define SKELETON_3_0_HEADER_LENGTH 64
-#define SKELETON_3_1_HEADER_LENGTH 104
+#define SKELETON_3_2_HEADER_LENGTH 112
 #define FISBONE_MAGIC "fisbone"
 #define FISBONE_MAGIC_LEN (sizeof(FISBONE_MAGIC) / sizeof(FISBONE_MAGIC[0]))
 #define FISBONE_BASE_SIZE 52
@@ -91,11 +91,13 @@ GetUniqueSerialNo(vector<Decoder*>& decoders)
 
 SkeletonEncoder::SkeletonEncoder(DecoderMap& decoders,
                                  ogg_int64_t fileLength,
-                                 ogg_int64_t oldSkeletonLength)
+                                 ogg_int64_t oldSkeletonLength,
+                                 ogg_uint64_t contentOffset)
   : mSkeletonDecoder(0),
     mFileLength(fileLength),
     mOldSkeletonLength(oldSkeletonLength),
-    mPacketCount(0)
+    mPacketCount(0),
+    mContentOffset(contentOffset)
 {
   DecoderMap::iterator itr = decoders.begin();
   while (itr != decoders.end()) {
@@ -156,9 +158,9 @@ SkeletonEncoder::AddBosPacket()
   // Allocate packet to return...
   ogg_packet* bos = new ogg_packet();
   memset(bos, 0, sizeof(ogg_packet));
-  bos->packet = new unsigned char[SKELETON_3_1_HEADER_LENGTH];
-  memset(bos->packet, 0, SKELETON_3_1_HEADER_LENGTH);
-  bos->bytes = SKELETON_3_1_HEADER_LENGTH;
+  bos->packet = new unsigned char[SKELETON_3_2_HEADER_LENGTH];
+  memset(bos->packet, 0, SKELETON_3_2_HEADER_LENGTH);
+  bos->bytes = SKELETON_3_2_HEADER_LENGTH;
   bos->b_o_s = 1;
   
   if (mSkeletonDecoder) {
@@ -185,6 +187,8 @@ SkeletonEncoder::AddBosPacket()
   WriteLEInt64(bos->packet + SKELETON_LAST_NUMER_OFFSET, GetMaxEndtime(mDecoders));
   WriteLEInt64(bos->packet + SKELETON_LAST_DENOM_OFFSET, 1000);
   
+  WriteLEUint64(bos->packet + SKELETON_CONTENT_OFFSET, mContentOffset);
+
   mPacketCount++;
 
   mIndexPackets.push_back(bos);
@@ -253,8 +257,8 @@ SkeletonEncoder::ConstructIndexPackets() {
     
     // Number of key points.
     assert(keyframes.size() < UINT_MAX);
-    WriteLEUint32(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET,
-                  (ogg_uint32_t)keyframes.size());
+    WriteLEUint64(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET,
+                  (ogg_uint64_t)keyframes.size());
     
     // Timestamp denominator.
     WriteLEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET, 1000);
@@ -356,12 +360,16 @@ SkeletonEncoder::CorrectOffsets() {
 
   // First correct the BOS packet's segment length field.
   WriteLEUint64(mIndexPackets[0]->packet + SKELETON_FILE_LENGTH_OFFSET, fileLength);
-  
+
   // Difference in file lengths before and after indexing. We must add this
   // amount to the page offsets in the index packets, as they've changed by
   // this much.
   ogg_int64_t lengthDiff = fileLength - mFileLength;
   assert(lengthDiff == (GetTrackLength() - mOldSkeletonLength));
+  mContentOffset += lengthDiff;
+
+  // Correct the BOS packet's content offset field.
+  WriteLEUint64(mIndexPackets[0]->packet + SKELETON_CONTENT_OFFSET, mContentOffset);
 
   for (ogg_uint32_t idx=0; idx<mIndexPackets.size(); idx++) {
     ogg_packet* packet = mIndexPackets[idx];
@@ -371,12 +379,11 @@ SkeletonEncoder::CorrectOffsets() {
       continue;
     }
     
-    unsigned char* p = packet->packet + INDEX_NUM_KEYPOINTS_OFFSET;
-    ogg_int32_t n = LEUint32(p);
-    p = packet->packet + INDEX_KEYPOINT_OFFSET;
+    ogg_uint64_t n = LEUint64(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET);
     assert(n == ((packet->bytes - INDEX_KEYPOINT_OFFSET) / KEY_POINT_SIZE));
     assert(n >= 0);
-    for (ogg_int32_t i=0; i<n && (p < packet->packet + packet->bytes); i++) {
+    unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
+    for (ogg_uint64_t i=0; i<n && (p < packet->packet + packet->bytes); i++) {
       ogg_uint64_t o = LEUint64(p);
       o += lengthDiff;
       assert((ogg_int64_t)o < fileLength);

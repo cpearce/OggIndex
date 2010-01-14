@@ -1,0 +1,203 @@
+Ogg Skeleton 3.2 with Keyframe Index
+Chris Pearce, Mozilla Corporation
+14 January 2010
+
+
+OVERVIEW
+
+Seeking in an Ogg file is typically implemented as a bisection search 
+over the pages in the file. The Ogg physical bitstream is bisected and 
+the next Ogg page's end-time is extracted. The bisection continues until 
+it reaches an Ogg page with an end-time close enough to the seek target 
+time. However in media containing streams which have keyframes and 
+interframes, such as Theora streams, your bisection search won't 
+necessarily terminate at a keyframe. Thus if you begin decoding after your
+first bisection terminates, you're likely to only get partial incomplete
+frames, with "visual artifacts", until you decode up to the next keyframe.
+So to eliminate these visual artifacts, after the first bisection
+terminates, you must extract the keyframe's timestamp from the last Theora
+page's granulepos, and seek again back to the start of the keyframe and
+decode forward until you reach the frame at the seek target. 
+
+This is further complicated by the fact that packets often span multiple 
+Ogg pages, and that Ogg pages from different streams can be interleaved 
+between spanning packets. 
+
+The bisection method above works fine for seeking in local files, but 
+for seeking in files served over the Internet via HTTP, each bisection 
+or non sequential read can trigger a new HTTP request, which can have 
+very high latency, making seeking very slow. 
+
+
+SEEKING WITH AN INDEX
+
+The Skeleton 3.2 bitstream attempts to alleviate this problem, by 
+providing an index of periodic keyframes for every content stream in an 
+Ogg segment. Note that the Skeleton 3.2 track only holds data for the 
+segment in which it resides. So if two Ogg files are concatenated together
+("chained"), the Skeleton 3.2's keyframe indexes in the first Ogg segment
+(the first Ogg in the "chain") do not contain information about the
+keyframes in the second Ogg segment (the second Ogg in the "chain"). 
+
+Each content track has a separate index, which is stored in its own 
+packet in the Skeleton 3.2 track. The index for streams without the 
+concept of a keyframe, such as Vorbis streams, can instead record the 
+time position at periodic intervals, which achieves the same result. 
+When this document refers to keyframes, it also implicitly refers to these
+independent periodic samples from keyframe-less streams. 
+
+All the Skeleton 3.2 track's pages appear in the header pages of the Ogg 
+segment. This means the all the keyframe indexes are immediately 
+available once the header packets have been read when playing the media
+over a network connection. 
+
+For every content stream in an Ogg segment, the Ogg index bitstream 
+provides seek algorithms with an ordered table of "key points". A key 
+point is intrinsically associated with exactly one stream, and refers to 
+a page in that stream. A key point k is defined as follows. Each key 
+point has an 8 byte offset o, a presentation time t as a fraction with an
+8 byte numerator and an 8 byte denominator, and a 4 byte checksum c. 
+This specifies that in order to render the stream at presentation time t,
+the last page which lies before all information required to render the 
+keyframe at presentation time t begins at byte offset o, as offset from
+the beginning of the Ogg segment. The checksum c is the checksum of the
+page which begins at offset o. This enables you to verify that you're
+seeking to the intended page, and that the segment has not been modified
+since the index was constructed. The time t is the keyframe's presentation
+time corresponding to the granulepos, and is represented as a fraction in
+seconds. Note that if a stream requires any preroll, this will be 
+accounted for in the time stored in the keypoint. 
+
+The Skeleton 3.2 track contains one index for each content stream in the 
+file. To seek in an Ogg file which contains keyframe indexes, first
+construct the set which contains every active streams' last keypoint which
+has time less than or equal to the seek target time. Then from that set
+of key points, select the key point with the smallest byte offset. You then
+verify that the page found at the selected key point's byte offset has the
+same checksum as the selected keypoint's checksum, and if so, you can begin
+decoding up to the seek target time. You are guaranteed to pass keyframes
+on all streams with time less than or equal to your seek target time while
+decoding up to the seek target. 
+
+Be aware that you cannot assume that any or all Ogg files will contain 
+keyframe indexes, and so when implementing Ogg seeking, you must 
+gracefully fall-back to a bisection search or other seek algorithm when 
+the index is not present. 
+
+When using the index to seek, you must verify that the index is still 
+correct - always check the key point's checksum matches the checksum of 
+the page found at excatly the checksum's offset. If it does not match, 
+the file has changed since it was indexed, and you cannot rely on the 
+index being reliable. You should then fallback to seek using a bisection
+search. You should also always check the Skeleton version header field
+to ensure your decoder correctly knows how to parse the Skeleton track. 
+
+The Skeleton 3.2 header packet also stores meta data about the segment in 
+which it resides. It stores the timestamps of the first and last samples
+in the segment. This also allows you to determine the duration of the
+indexed Ogg media without having to decode the start and end of the
+Ogg segment to calculate the difference (which is the duration). The index
+header also contains the length of the index segment in bytes. This is so
+that if the seek target is outside of the indexed range, you can
+immediately move to the next/previous segment and either seek using that
+segment's index, or narrow the bisection window if that segment has no index.
+
+
+FORMAT SPECIFICATION 
+
+Unless otherwise specified, all integers and fields in the bitstream are 
+encoded with the least significant bit coming first in each byte. 
+Integers and fields comprising of more than one byte are encoded least 
+significant byte first (i.e. little endian byte order). 
+
+The Skeleton 3.2 track is intended to be backwards compatible with the 
+Skeleton 3.0 specification, available at 
+http://www.xiph.org/ogg/doc/skeleton.html . Unless specified 
+differently here, it is safe to assume that anything specified for a 
+Skeleton 3.0 track holds for a Skeleton 3.2 track. 
+
+As per the Skeleton 3.0 track, a segment containing a Skeleton 3.2 track 
+must begin with a "fishead" BOS packet on a page by itself, with the 
+following format: 
+
+1.  Identifier: 8 bytes, "fishead\0".
+2.  Version major: 2 Byte unsigned integer denoting the major version (3)
+3.  Version minor: 2 Byte unsigned integer denoting the minor version (2)
+4.  Presentationtime numerator: 8 Byte signed integer
+5.  Presentationtime denominator: 8 Byte signed integer
+6.  Basetime numerator: 8 Byte signed integer
+7.  Basetime denominator: 8 Byte signed integer
+8.  UTC [ISO8601]: a 20 Byte string containing a UTC time
+9.  [NEW] First-sample-time numerator: 8 byte signed integer representing
+    the numerator for the presentation time of the first sample in the media.
+    Note that samples between the first-sample-time and the Presentationtime
+    are supposed to be skipped during playback.
+10. [NEW] First-sample-time denominator: 8 byte signed integer, with value 0
+    if the timestamp is unknown. Decoders should always ensure that the
+    denominator is not 0 before using it as a divisor!
+11. [NEW] Last-sample-time numerator: 8 byte signed integer representing the end
+    time of the last sample in the segment.
+12. [NEW] Last-sample-time denominator: 8 byte signed integer, with value 0
+    if the timestamp is unknown. Decoders should always ensure that the
+    denominator is not 0 before using it as a divisor!
+13. [NEW] The length of the segment, in bytes: 8 byte unsigned integer,
+    0 if unknown.
+14. [NEW] The offset of the first non-header page in bytes: 8 byte unsigned
+    integer.
+
+The first-sample-time and last-sample-time are rational numbers, in units
+of seconds. If the denominator is 0 for the first-sample-time or the
+last-sample-time, then that value was unable to be determined at indexing
+time, and is unknown. The duration of the Ogg segment can be calculated by
+subtracting the first-sample-time from the last-sample-time.
+
+In Skeleton 3.2 the "fisbone" packets remain unchanged from Skeleton 
+3.0, and will still follow after the other streams' BOS pages and 
+secondary header pages. 
+
+Before the Skeleton EOS page in the segment header pages come the 
+Skeleton 3.2 keyframe index packets. There is one index packet for each 
+content stream in the Ogg segment. Each index packet contains the 
+following: 
+
+1. Identifier 6 bytes: "index\0"
+2. The serialno of the stream this index applies to, as a 4 byte field.
+3. The number of keypoints in this index packet, 'n' as a 8 byte
+   unsigned integer. This can be 0.
+4. The keypoint presentation time denominator, as an 8 byte signed integer.
+5. 'n' key points, each of which contain, in the following order:
+    - a page start's byte offset as an 8 byte unsigned integer, followed by
+    - the checksum of the page found at the offset, as a 4 byte field,
+      followed by
+    - the presentation time numerator of the first key frame which
+      starts on the page at the keypoint's offset, as an 8 byte integer.
+      Divide this by the timestamp denominator to determine the presentation
+      time of the keyframe in seconds.
+
+Note that a keypoint always represents the first key frame on a page. If an
+Ogg page contains two or more keyframes, the index's key point *must* refer
+to the first keyframe on that page, not the second.
+
+The key points are stored in increasing order by offset (and thus by 
+presentation time as well). Note that an index packet may be larger than
+(6 + 4 + 8 + 8 + (n * (8 + 4 + 8)) bytes, as it may have been 
+preallocated during encoding, but not completely filled. Do not make 
+assumptions about an index packet's size, always check an index packet's
+'bytes' field to determine its size, and always use its 'n' field to 
+determine the number of keypoints contained in the index packet. 
+
+The byte offsets stored in keypoints are relative to the start of the Ogg
+bitstream segment. So if you have a physical Ogg bitstream made up of two
+chained Oggs, the offsets in the second Ogg segment's bitstream's index
+are relative to the beginning of the second Ogg in the chain, not the first.
+Also note that if a physical Ogg bitstream is made up of chained Oggs, the
+presence of an index in one segment does not imply that there will be an
+index in any other segment. 
+
+The exact number of keyframes used to construct key points in the index 
+is up to the indexer, but to limit the index size, we recommend 
+including at most one key point per every 64KB of data, or every 2000ms, 
+whichever is least frequent. 
+
+As per the Skeleton 3.0 track, the last packet in the Skeleton 3.2 track 
+is an empty EOS packet. 

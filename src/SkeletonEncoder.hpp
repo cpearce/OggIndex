@@ -40,12 +40,14 @@
 #define __SKELETON_ENCODER_HPP__
 
 #include "Decoder.hpp"
+#include "Utils.hpp"
 
 class SkeletonEncoder {
 public:
   SkeletonEncoder(DecoderMap& decoders,
                   ogg_int64_t fileLength,
-                  ogg_int64_t oldSkeletonLength);
+                  ogg_int64_t oldSkeletonLength,
+                  ogg_uint64_t contentOffset);
   
   ~SkeletonEncoder();
   
@@ -73,6 +75,7 @@ private:
   ogg_int32_t mPacketCount;
   vector<ogg_packet*> mIndexPackets;
   vector<ogg_page*> mIndexPages;
+  ogg_uint64_t mContentOffset;
 
   void ConstructIndexPackets();
 

@@ -364,6 +364,7 @@ public:
   ogg_int64_t mStartTime; // in ms
   ogg_int64_t mEndTime; // in ms
   ogg_int64_t mFileLength; // in bytes.
+  ogg_uint64_t mContentOffset; // in bytes.
 
   Skeleton(ogg_uint32_t serial)
     : VerifyDecoder(serial)
@@ -416,6 +417,12 @@ public:
         ogg_int64_t last_num = LEUint64(op.packet + SKELETON_LAST_NUMER_OFFSET);
         ogg_int64_t last_denom = LEUint64(op.packet + SKELETON_LAST_DENOM_OFFSET);
         mEndTime = (last_denom == 0) ? -1 : (last_num * 1000) / last_denom;
+
+        mContentOffset = LEUint64(op.packet + SKELETON_CONTENT_OFFSET);
+        if (mContentOffset == 0) {
+          cerr << "Verification Failure: content offset is 0" << endl;
+          return false;
+        }
 
         mFileLength = LEUint64(op.packet + SKELETON_FILE_LENGTH_OFFSET);
 
@@ -481,10 +488,12 @@ bool ValidateIndexedOgg(const string& filename) {
   Vorbis* vorbis = 0;
   Skeleton* skeleton = 0;
   bool index_valid = true;
+  ogg_uint64_t contentOffset = 0;
   
   while (!ReadAllHeaders(theora, vorbis, skeleton) && 
          ReadPage(&state, &page, input, bytesRead))
   {
+    contentOffset += page.header_len + page.body_len;
     int serialno = ogg_page_serialno(&page);
     VerifyDecoder* decoder = 0;
     if (ogg_page_bos(&page)) {
@@ -514,6 +523,12 @@ bool ValidateIndexedOgg(const string& filename) {
     if (!decoder->Decode(&page, ignore)) {
       index_valid = false;
     }
+  }
+
+  if (skeleton->mContentOffset != contentOffset) {
+    cerr << "FAIL: skeleton header's reported content offset (" << skeleton->mContentOffset
+         << ") does not match actual content offset (" << contentOffset << ")" << endl;
+    index_valid = false;
   }
 
   ogg_int64_t fileLength = FileLength(filename.c_str());

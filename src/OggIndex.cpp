@@ -153,7 +153,7 @@ int main(int argc, char** argv)
   
   ogg_sync_clear(&state);
   
-  SkeletonEncoder encoder(decoders, fileLength, oldSkeletonLength);
+  SkeletonEncoder encoder(decoders, fileLength, oldSkeletonLength, endOfHeaders);
 
   // Reopen the file so we can write it out with the index.
   input.close();

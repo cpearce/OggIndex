@@ -168,11 +168,12 @@ typedef map<ogg_uint32_t, Decoder*> DecoderMap;
 #define SKELETON_LAST_NUMER_OFFSET 80
 #define SKELETON_LAST_DENOM_OFFSET 88
 #define SKELETON_FILE_LENGTH_OFFSET 96
+#define SKELETON_CONTENT_OFFSET 104
 
 #define INDEX_SERIALNO_OFFSET 6
 #define INDEX_NUM_KEYPOINTS_OFFSET 10
-#define INDEX_TIME_DENOM_OFFSET 14
-#define INDEX_KEYPOINT_OFFSET 22
+#define INDEX_TIME_DENOM_OFFSET 18
+#define INDEX_KEYPOINT_OFFSET 26
 
 
 // Skeleton decoder. Must have public interface, as we use this in the
