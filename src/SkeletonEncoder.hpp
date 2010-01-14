@@ -42,6 +42,9 @@
 #include "Decoder.hpp"
 #include "Utils.hpp"
 
+#define SKELETON_VERSION_MAJOR 3
+#define SKELETON_VERSION_MINOR 2
+
 class SkeletonEncoder {
 public:
   SkeletonEncoder(DecoderMap& decoders,

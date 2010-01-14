@@ -176,9 +176,9 @@ SkeletonEncoder::AddBosPacket()
     WriteLEUint64(bos->packet + SKELETON_BASE_TIME_DENOM_OFFSET, 1000);
   }
   
-  // Set the version fields to 3.1.
-  WriteLEUint16(bos->packet + SKELETON_VERSION_MAJOR_OFFSET, 3);
-  WriteLEUint16(bos->packet + SKELETON_VERSION_MINOR_OFFSET, 1);
+  // Set the version fields.
+  WriteLEUint16(bos->packet + SKELETON_VERSION_MAJOR_OFFSET, SKELETON_VERSION_MAJOR);
+  WriteLEUint16(bos->packet + SKELETON_VERSION_MINOR_OFFSET, SKELETON_VERSION_MINOR);
   
   // Write start time and end time.
   WriteLEInt64(bos->packet + SKELETON_FIRST_NUMER_OFFSET, GetMinStartTime(mDecoders));

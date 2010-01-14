@@ -408,7 +408,7 @@ public:
           exit(-1);
         }
 
-        // Decode the 3.1 header fields, for validation later.
+        // Decode the 3.x header fields, for validation later.
         // TODO: How can I validate these further?
         ogg_int64_t start_num = LEUint64(op.packet + SKELETON_FIRST_NUMER_OFFSET);
         ogg_int64_t start_denom = LEUint64(op.packet + SKELETON_FIRST_DENOM_OFFSET);

@@ -113,7 +113,7 @@ int CountPacketStarts(ogg_page* page);
 
 #define SKELETON_VERSION(major, minor) (((major)<<16)|(minor))
 
-// Returns true if the file has an accurate Skeleton3.1 Index track.
+// Returns true if the file has an accurate Skeleton 3.x Index track.
 bool ValidateIndexedOgg(const string& filename);
 
 ogg_uint64_t
