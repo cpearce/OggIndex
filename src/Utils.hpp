@@ -40,7 +40,6 @@
 #ifndef __UTILS_H__
 #define __UTILS_H__
 
-
 #include <fstream>
 #include <ogg/ogg.h>
 #include <theora/codec.h>
@@ -146,5 +145,12 @@ WriteLEInt32(unsigned char* p, const ogg_int32_t num);
 
 unsigned char*
 WriteLEUint16(unsigned char* p, const ogg_uint16_t num);
+
+unsigned char*
+ReadVariableLength(unsigned char* p, ogg_int64_t* num);
+
+template<class T>
+unsigned char*
+WriteVariableLength(unsigned char* p, const T n);
 
 #endif

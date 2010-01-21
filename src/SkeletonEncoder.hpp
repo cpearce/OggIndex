@@ -68,6 +68,7 @@ public:
   
   bool Encode();
 
+  ogg_int64_t ContentOffset() { return mContentOffset; }
 private:
 
   vector<Decoder*> mDecoders;
@@ -79,7 +80,7 @@ private:
   vector<ogg_packet*> mIndexPackets;
   vector<ogg_page*> mIndexPages;
   ogg_uint64_t mContentOffset;
-
+  
   void ConstructIndexPackets();
 
   void ConstructPages();

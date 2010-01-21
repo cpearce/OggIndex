@@ -111,7 +111,8 @@ int main(int argc, char** argv)
            << " length=" << length << " granulepos=" << granulepos 
            << " end_time=" << decoder->GranuleposToTime(granulepos) << "ms"
            << " s=" << serial << " packet_starts=" << CountPacketStarts(&page)
-           << " packet_ends=" << ogg_page_packets(&page) << endl;
+           << " packet_ends=" << ogg_page_packets(&page)
+           << " checksum=" << GetChecksum(&page) << endl;
     }
 
     decoder->Decode(&page, offset);
@@ -169,34 +170,57 @@ int main(int argc, char** argv)
   
   // Write out the new skeleton BOS page.
   encoder.WriteBosPage(output);
+  if (!output.good()) {
+    cerr << "ERROR: Failed to write new skeleton BOS page." << endl;
+    return -1;
+  }
   
   // Write out all the other tracks' header pages.
   for (ogg_uint32_t i=0; i<headerPages.size(); i++) {
     WritePage(output, *headerPages[i]);
+    if (!output.good()) {
+      cerr << "ERROR: Failed to write other tracks' header pages." << endl;
+      return -1;
+    }
     FreeClone(headerPages[i]);
   }
 
   // Write out remaining skeleton pages.
   encoder.WritePages(output);
+  if (!output.good()) {
+    cerr << "ERROR: Failed to write new skeleton index pages." << endl;
+    return -1;
+  }
+
+  assert(encoder.ContentOffset() == output.tellp());
 
   // Copy content pages.
   input.seekg((std::streamoff)endOfHeaders);
   CopyFileData(input, output, fileLength - endOfHeaders);
+  if (!output.good()) {
+    cerr << "ERROR: Failed to write remaining content pages." << endl;
+    return -1;
+  }
   
   output.close();
   input.close();
 
-  if (gOptions.GetVerifyIndex()) {
-    if (!ValidateIndexedOgg(gOptions.GetOutputFilename())) {
-      cerr << "FAIL: Verification of the index failed!" << endl;
-    } else {
-      cout << "SUCCESS: index passes verification." << endl;
-    }
-  }
-  
   ogg_int64_t trackLength = encoder.GetTrackLength();
-  cout << "Index track length: " << trackLength << " bytes, "
+  cout << "Skeleton " << SKELETON_VERSION_MAJOR << "." << SKELETON_VERSION_MINOR 
+       << " track with keyframe indexes uses " << trackLength << " bytes, "
        << ((float)trackLength / (float)(fileLength + trackLength)) * 100.0
        << "% overhead" << endl;
-  return 0;
+
+  int retval = 0;
+  if (gOptions.GetVerifyIndex()) {
+    cout << "Validating keyframe indexes..." << endl;
+    if (!ValidateIndexedOgg(gOptions.GetOutputFilename())) {
+      cerr << "FAIL: Verification of the index failed!" << endl;
+      retval = -1;
+    } else {
+      cout << "SUCCESS: index is valid." << endl;
+    }
+  }
+
+  return retval;
 }

@@ -48,11 +48,10 @@
 #include <vorbis/codec.h>
 #include "Options.hpp"
 #include "Utils.hpp"
+#include "SkeletonEncoder.hpp"
 
 // Need to index keyframe if we've not seen 1 in 64K.
 #define MIN_KEYFRAME_OFFSET (64 * 1024)
-
-
 
 static ogg_uint32_t
 Checksum(ogg_page* page)
@@ -162,6 +161,10 @@ public:
     // Construct list of keyframes from page and frame info lists.
     // Need to determine frame start offsets and fill key points array.
 
+    if (mKeyFrames.size() > 0) {
+      return mKeyFrames;
+    }
+
     // Packetno of the last packet which has started.
     ogg_int64_t started_packetno = mFirstPacketno - 1;
     // Must at least have header packets.
@@ -201,6 +204,7 @@ public:
       prev_keyframe_pageno = pageno;
 
     } // for each frame
+
     return mKeyFrames;
   }
 
@@ -528,7 +532,10 @@ private:
 
 SkeletonDecoder::SkeletonDecoder(ogg_uint32_t serial) :
   Decoder(serial),
-  mGotAllHeaders(0)    
+  mGotAllHeaders(0),
+  mVersionMajor(0),
+  mVersionMinor(0),
+  mVersion(0)
 {
   for (ogg_uint32_t i=0; i<mPackets.size(); i++) {
     delete[] mPackets[i]->packet;
@@ -570,7 +577,13 @@ bool SkeletonDecoder::Decode(ogg_page* page, ogg_int64_t offset) {
 
     if (IsIndexPacket(&packet)) {
       assert(!packet.e_o_s);
-      if (!::DecodeIndex(mIndex, &packet)) {
+      if (SKELETON_VERSION(SKELETON_VERSION_MAJOR,SKELETON_VERSION_MINOR) != mVersion) {
+        cerr << "WARNING: Encountered an index packet of version " 
+             << mVersionMajor << "." << mVersionMinor
+             << ". I can only read version "
+             << SKELETON_VERSION_MAJOR << "." << SKELETON_VERSION_MINOR 
+             << ", so skipping index packet." << endl;
+      } else if (!::DecodeIndex(mIndex, &packet)) {
         cerr << "WARNING: Index packet " << packet.packetno << " of stream "
              << ogg_page_serialno(page) << " failed to parse." << endl;
       }
@@ -582,12 +595,12 @@ bool SkeletonDecoder::Decode(ogg_page* page, ogg_int64_t offset) {
     
     // Check if the skeleton version is 3.x, fail otherwise.
     if (IsFisheadPacket(&packet)) {
-      ogg_uint16_t ver_maj = LEUint16(packet.packet + 8);
-      ogg_uint16_t ver_min = LEUint16(packet.packet + 10);
-      ogg_uint32_t version = SKELETON_VERSION(ver_maj, ver_min);
-      if (version < SKELETON_VERSION(3,0) ||
-          version >= SKELETON_VERSION(4,0)) { 
-        cerr << "FAIL: Skeleton version " << ver_maj << "." <<ver_min   
+      mVersionMajor = LEUint16(packet.packet + 8);
+      mVersionMinor = LEUint16(packet.packet + 10);
+      mVersion = SKELETON_VERSION(mVersionMajor, mVersionMinor);
+      if (mVersion < SKELETON_VERSION(3,0) ||
+          mVersion >= SKELETON_VERSION(4,0)) { 
+        cerr << "FAIL: Skeleton version " << mVersionMajor << "." << mVersionMinor   
              << " detected. I can only handle version 3.x" << endl;
         exit(-1);
       }
@@ -632,18 +645,13 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   // Check that the packet's not smaller or significantly larger than
   // we expect. These cases denote a malicious or invalid num_key_points
   // field.
-  ogg_int64_t expectedPacketSize = INDEX_KEYPOINT_OFFSET + numKeyPoints * KEY_POINT_SIZE;
-  ogg_int32_t actualNumPackets = (packet->bytes - INDEX_KEYPOINT_OFFSET) / KEY_POINT_SIZE;
-  if (((packet->bytes - INDEX_KEYPOINT_OFFSET) % KEY_POINT_SIZE) != 0) {
-    cerr << "WARNING: index packet size is odd size, last keypoint is incomplete." << endl;
-  }
-  if (packet->bytes < expectedPacketSize ||
-      numKeyPoints > actualNumPackets) {
+  ogg_int64_t max_packet_size = INDEX_KEYPOINT_OFFSET + numKeyPoints * MAX_KEY_POINT_SIZE;
+  if (packet->bytes > max_packet_size) {
     cerr << "WARNING: Possibly malicious number of key points reported in index packet." << endl;
     return false;
   }
-  if (expectedPacketSize > INT_MAX) {
-    cerr << "ERROR: I can't handle expeted index sizes greater than 2^32." << endl;
+  if (max_packet_size > INT_MAX) {
+    cerr << "ERROR: I can't handle index sizes greater than 2^32." << endl;
     return false;
   }
 
@@ -657,23 +665,27 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   keypoints->reserve((ogg_int32_t)numKeyPoints);
     
   /* Read in key points. */
+  unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
+  ogg_int64_t offset = 0;
+  ogg_int64_t time = 0;
   for (ogg_int64_t i=0; i<numKeyPoints; i++) {
-    unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET + (i * KEY_POINT_SIZE);
     assert(p < packet->packet + packet->bytes);
-    ogg_uint64_t offset=0;
-    ogg_uint32_t checksum=0;
-    ogg_uint64_t time=0;
-    
-    offset = LEInt64(p);
+
+    ogg_int64_t offset_delta = 0;
+    p = ReadVariableLength(p, &offset_delta);
+    offset += offset_delta;
 
     assert(p < packet->packet + packet->bytes);
-    checksum = LEUint32(p + 8);
+    ogg_uint32_t checksum = LEUint32(p);
+    p += 4;
 
     assert(p < packet->packet + packet->bytes);
-    time = LEInt64(p + 12);
-    time = (time * time_multiplier) / time_denom;    
+    ogg_int64_t time_delta = 0;
+    p = ReadVariableLength(p, &time_delta);
+    time += time_delta;
+    ogg_int64_t time_ms = (time * time_multiplier) / time_denom;    
     
-    keypoints->push_back(KeyFrameInfo(offset, time, checksum));
+    keypoints->push_back(KeyFrameInfo(offset, time_ms, checksum));
   }
   
   index[serialno] = keypoints;

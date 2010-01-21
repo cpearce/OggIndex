@@ -232,6 +232,79 @@ SkeletonEncoder::AddEosPacket() {
   mIndexPackets.push_back(eos);
 }
 
+static int bits_required(ogg_int64_t n) {
+  int count = 0;
+  while (n) {
+    n = n >> 1;
+    count++;
+  }
+  return count;
+}
+
+static int bytes_required(ogg_int64_t n) {
+  int bits = bits_required(n);
+  int bytes = bits / 7;
+  return bytes + (((bits % 7) != 0 || bits == 0) ? 1 : 0);
+}
+
+static ogg_int64_t compressed_length(const vector<KeyFrameInfo>& K) {
+  ogg_int64_t length = 0;
+  length = 4 + bytes_required(K[0].mOffset) + bytes_required(K[0].mTime);
+  for (int i=1; i<K.size(); i++) {
+    ogg_int64_t off_diff = K[i].mOffset - K[i-1].mOffset;
+    ogg_int64_t time_diff = K[i].mTime - K[i-1].mTime;
+    length += 4 + bytes_required(off_diff) + bytes_required(time_diff);
+  }
+  return length;
+}
+
+unsigned char*
+ReadVariableLength(unsigned char* p, ogg_int64_t* num) {
+  *num = 0;
+  int shift = 0;
+  ogg_int64_t byte = 0;
+  do {
+    byte = (ogg_int64_t)(*p);
+    *num |= ((byte & 0x7f) << shift);
+    shift += 7;
+    p++;
+  } while ((byte & 0x80) != 0x80);
+  return p;
+}
+
+template<class T>
+unsigned char*
+WriteVariableLength(unsigned char* p, const T n)
+{
+  unsigned char* before_p = p;
+  T k = n;
+  do {
+    unsigned char b = (unsigned char)(k & 0x7f);
+    k >>= 7;
+    if (k == 0) {
+      // Last byte, add terminating bit.
+      b |= 0x80;
+    }
+    *p = b;
+    p++;
+  } while (k);
+
+#if _DEBUG
+  ogg_int64_t t;
+  ReadVariableLength(before_p, &t);
+  assert(t == n);
+#endif
+  return p;
+}
+
+const char* sStreamType[] = {
+  "Unknown",
+  "Vorbis",
+  "Theora",
+  "Skeleton",
+  "Unsupported"
+};
+
 void
 SkeletonEncoder::ConstructIndexPackets() {
   assert(mIndexPackets.size() > 0);
@@ -239,13 +312,22 @@ SkeletonEncoder::ConstructIndexPackets() {
     ogg_packet* packet = new ogg_packet();
     memset(packet, 0, sizeof(ogg_packet));
     
-    const vector<KeyFrameInfo>& keyframes = mDecoders[i]->GetKeyframes();
+    Decoder* decoder = mDecoders[i];
+    const vector<KeyFrameInfo>& keyframes = decoder->GetKeyframes();
     
-    const ogg_int32_t packetSize = INDEX_KEYPOINT_OFFSET +
-                                  (int)keyframes.size() * KEY_POINT_SIZE;
-    packet->bytes = packetSize;
-    unsigned char* p = new unsigned char[packetSize];
-    memset(p, 0, packetSize);
+    const ogg_int32_t uncompressed_size = INDEX_KEYPOINT_OFFSET +
+                                  (int)keyframes.size() * 20;
+
+    ogg_int64_t compressed_size =
+      INDEX_KEYPOINT_OFFSET + compressed_length(keyframes);
+
+    double savings = ((double)compressed_size / (double)uncompressed_size) * 100.0;
+    cout << sStreamType[mDecoders[i]->Type()] << " index uses " << uncompressed_size 
+         << " bytes, compresses to " << compressed_size << " (" << savings << "%)" << endl;
+
+    packet->bytes = compressed_size;
+    unsigned char* p = new unsigned char[compressed_size];
+    memset(p, 0, compressed_size);
     packet->packet = p;
 
     // Identifier bytes.
@@ -264,14 +346,31 @@ SkeletonEncoder::ConstructIndexPackets() {
     WriteLEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET, 1000);
 
     p = packet->packet + INDEX_KEYPOINT_OFFSET;
-    for (ogg_uint32_t i=0; i<keyframes.size(); i++) {
-      const KeyFrameInfo& k = keyframes[i];
-      p = WriteLEUint64(p, k.mOffset);
+
+    ogg_int64_t prev_offset = 0;
+    ogg_int64_t prev_time = 0;
+    for (ogg_uint32_t j=0; j<keyframes.size(); j++) {
+      const KeyFrameInfo& k = keyframes[j];
+
+      ogg_int64_t off_diff = k.mOffset - prev_offset;
+      ogg_int64_t time_diff = k.mTime - prev_time;
+
+      unsigned char* expected = p + bytes_required(off_diff);
+      p = WriteVariableLength(p, off_diff);
+      assert(p == expected);
+
       p = WriteLEUint32(p, k.mChecksum);
-      p = WriteLEUint64(p, k.mTime);
+
+      expected = p + bytes_required(time_diff);
+      p = WriteVariableLength(p, time_diff);
+      assert(p == expected);
+
+      prev_offset = k.mOffset;
+      prev_time = k.mTime;
+
     }
     
-    assert(p == packet->packet + packetSize);
+    assert(p == packet->packet + compressed_size);
 
     packet->packetno = mPacketCount;
     mPacketCount++;
@@ -356,21 +455,16 @@ void
 SkeletonEncoder::CorrectOffsets() {
   assert(mIndexPackets.size() != 0);
   ogg_int64_t fileLength = mFileLength - mOldSkeletonLength + GetTrackLength();
-  cout << "I think indexed file length is " << fileLength << endl;
-
-  // First correct the BOS packet's segment length field.
-  WriteLEUint64(mIndexPackets[0]->packet + SKELETON_FILE_LENGTH_OFFSET, fileLength);
 
   // Difference in file lengths before and after indexing. We must add this
   // amount to the page offsets in the index packets, as they've changed by
   // this much.
   ogg_int64_t lengthDiff = fileLength - mFileLength;
   assert(lengthDiff == (GetTrackLength() - mOldSkeletonLength));
-  mContentOffset += lengthDiff;
 
-  // Correct the BOS packet's content offset field.
-  WriteLEUint64(mIndexPackets[0]->packet + SKELETON_CONTENT_OFFSET, mContentOffset);
-
+  // First determine by how much the file will grow when we update all the
+  // offsets.
+  ogg_int64_t extra_bytes = 0;
   for (ogg_uint32_t idx=0; idx<mIndexPackets.size(); idx++) {
     ogg_packet* packet = mIndexPackets[idx];
     assert(packet);
@@ -378,19 +472,89 @@ SkeletonEncoder::CorrectOffsets() {
     if (!IsIndexPacket(packet)) {
       continue;
     }
-    
-    ogg_uint64_t n = LEUint64(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET);
-    assert(n == ((packet->bytes - INDEX_KEYPOINT_OFFSET) / KEY_POINT_SIZE));
-    assert(n >= 0);
+
     unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
-    for (ogg_uint64_t i=0; i<n && (p < packet->packet + packet->bytes); i++) {
-      ogg_uint64_t o = LEUint64(p);
-      o += lengthDiff;
-      assert((ogg_int64_t)o < fileLength);
-      WriteLEUint64(p, o);
-      p += KEY_POINT_SIZE;
+    ogg_int64_t offset = 0;
+    p = ReadVariableLength(p, &offset);
+
+    // If increasing the first keypoint's offset field means it needs more
+    // bytes to be encoded, increase the size of the index to accomodate this.
+    int adjusted_bytes_required = bytes_required(offset + lengthDiff);
+    int existing_bytes_required = bytes_required(offset);
+    if (adjusted_bytes_required != existing_bytes_required) {
+      extra_bytes += adjusted_bytes_required - existing_bytes_required;
     }
   }
+  lengthDiff += extra_bytes;
+  fileLength += extra_bytes;
+  mContentOffset += lengthDiff;
+
+  // Correct the offset of the first keyframe in every track by how much
+  // the offsets have changed.
+  for (ogg_uint32_t idx=0; idx<mIndexPackets.size(); idx++) {
+    ogg_packet* packet = mIndexPackets[idx];
+    assert(packet);
+    
+    if (!IsIndexPacket(packet)) {
+      continue;
+    }
+
+    unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
+    ogg_int64_t offset = 0;
+    p = ReadVariableLength(p, &offset);
+
+    ogg_uint32_t existing_checksum = LEUint32(p);
+    ogg_int64_t existing_time_diff = 0;
+    ReadVariableLength(p + 4, &existing_time_diff);
+    ogg_int64_t existing_offset = offset;
+
+    // If increasing the first keypoint's offset field means it needs more
+    // bytes to be encoded, increase the size of the index to accomodate this.
+    int adjusted_bytes_required = bytes_required(offset + lengthDiff);
+    int existing_bytes_required = bytes_required(offset);
+    if (adjusted_bytes_required != existing_bytes_required) {
+      // We don't have enough room to write the adjusted offset back into the
+      // variable-length encoded keypoint data. Make the packet bigger.
+      int diff = adjusted_bytes_required - existing_bytes_required;
+      unsigned char* q = new unsigned char[packet->bytes + diff];
+
+      // Copy up to the keypoints into the new packet.
+      memcpy(q, packet->packet, INDEX_KEYPOINT_OFFSET);
+
+      // Copy from after the first keypoint's offset until the end into
+      // the new packet.
+      memcpy(q + INDEX_KEYPOINT_OFFSET + adjusted_bytes_required,
+             packet->packet + INDEX_KEYPOINT_OFFSET + existing_bytes_required,
+             packet->bytes - INDEX_KEYPOINT_OFFSET - existing_bytes_required);
+
+      delete packet->packet;
+      packet->packet = q;
+      assert(mIndexPackets[idx]->packet == q);
+      packet->bytes += diff;
+    }
+
+    // Write the adjusted 
+    offset += lengthDiff;
+    WriteVariableLength(packet->packet + INDEX_KEYPOINT_OFFSET, offset);
+
+    ogg_int64_t new_offset = 0;
+    unsigned char* j = ReadVariableLength(packet->packet + INDEX_KEYPOINT_OFFSET, &new_offset);
+    ogg_uint32_t new_checksum = LEUint32(j);
+    ogg_int64_t new_time_diff = 0;
+    ReadVariableLength(j + 4, &new_time_diff);
+
+    assert(existing_offset + lengthDiff == new_offset);
+    assert(existing_checksum == new_checksum);
+    assert(existing_time_diff == new_time_diff);
+  }
+
+  // First correct the BOS packet's segment length field.
+  WriteLEUint64(mIndexPackets[0]->packet + SKELETON_FILE_LENGTH_OFFSET, fileLength);
+
+
+  // Correct the BOS packet's content offset field.
+  WriteLEUint64(mIndexPackets[0]->packet + SKELETON_CONTENT_OFFSET, mContentOffset);
+
 }
 
 // Write out the new skeleton BOS page.

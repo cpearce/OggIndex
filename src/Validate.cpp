@@ -47,6 +47,7 @@
 #include <string.h>
 #include "Utils.hpp"
 #include "Decoder.hpp"
+#include "SkeletonEncoder.hpp"
 
 using namespace std;
 
@@ -71,7 +72,7 @@ public:
   
   virtual void Reset() = 0;
   
-  virtual const char* Type() { return "unknown"; }  
+  virtual const char* Type() { return "Unknown"; }  
 };
 
 
@@ -143,7 +144,7 @@ public:
     mGranulepos = -1;
   }
   
-  virtual const char* Type() { return "theora"; }
+  virtual const char* Type() { return "Theora"; }
 
   // Decode all keyframes in the given page, and return the start time of
   // the next keyframe.
@@ -299,7 +300,7 @@ public:
     }
   }
 
-  virtual const char* Type() { return "vorbis"; }
+  virtual const char* Type() { return "Vorbis"; }
 
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
     ogg_packet op;
@@ -381,7 +382,7 @@ public:
   virtual void Reset() {
   }
   
-  virtual const char* Type() { return "skeleton"; }
+  virtual const char* Type() { return "Skeleton"; }
 
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
     end_time = -1;
@@ -404,7 +405,8 @@ public:
         if (version < SKELETON_VERSION(3,0) ||
             version >= SKELETON_VERSION(4,0)) { 
           cerr << "FAIL: Skeleton version " << ver_maj << "." <<ver_min   
-               << " detected. I can only validate version 3.1" << endl;
+               << " detected. I can only validate version "
+               << SKELETON_VERSION_MAJOR << "." << SKELETON_VERSION_MINOR << endl;
           exit(-1);
         }
 
@@ -489,7 +491,7 @@ bool ValidateIndexedOgg(const string& filename) {
   Skeleton* skeleton = 0;
   bool index_valid = true;
   ogg_uint64_t contentOffset = 0;
-  
+
   while (!ReadAllHeaders(theora, vorbis, skeleton) && 
          ReadPage(&state, &page, input, bytesRead))
   {
@@ -550,13 +552,13 @@ bool ValidateIndexedOgg(const string& filename) {
     VerifyDecoder* decoder = decoders[serialno];
 
     if (v->size() == 0) {
-      cerr << "WARNING: Index for " << decoder->Type() << " track s="
-           << serialno << " has no keyframes" << endl;
+      cerr << "WARNING: " << decoder->Type() << " track serialno="  << serialno
+           << " index has no keyframes" << endl;
       continue;
     }
 
-    cout << "Index for " << decoder->Type()
-         << " track serialno=" << serialno << ", " << v->size() << " keypoints." << endl;
+    cout << decoder->Type() << " track serialno=" << serialno
+         << " index has " << v->size() << " keypoints." << endl;
 
     bool valid = true;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
@@ -642,11 +644,11 @@ bool ValidateIndexedOgg(const string& filename) {
       }
     }
     if (valid) {
-      cout << "Keyframe index for " << decoder->Type() << " track s="
-           << serialno << " is accurate" << endl;
+      cout << decoder->Type() << " track serialno=" << serialno
+           << " index is accurate." << endl;
     } else {
-      cout << "FAIL: Keyframe index for " << decoder->Type() << " track s="
-           << serialno << " is NOT accurate." << endl;
+      cout << "FAIL: " << decoder->Type() << " track serialno=" << serialno
+           << " index is NOT accurate." << endl;
       index_valid = false;
     }
   }

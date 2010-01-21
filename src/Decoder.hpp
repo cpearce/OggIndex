@@ -46,9 +46,10 @@
 
 using namespace std;
 
-// Size of one key point entry in the index.
-// sizeof(ogg_int64_t) + sizeof(int32) + sizeof(ogg_int64_t)
-#define KEY_POINT_SIZE 20
+// Maximum possible size of one uncompressed keypoint entry in the index. This
+// takes into account the maximum possible values for all fields, and the number
+// of bytes required to encode their maximum values with variable byte encoding.
+#define MAX_KEY_POINT_SIZE 24
 
 // Magic bytes for index packet.
 #define HEADER_MAGIC "index"
@@ -143,7 +144,7 @@ public:
   // Returns the keyframes for indexing. Call this after the entire stream
   // has been decoded.
   virtual const vector<KeyFrameInfo>& GetKeyframes() = 0;
-  
+
   virtual StreamType Type() = 0;
   virtual const char* TypeStr() = 0;
   ogg_int64_t GetStartTime() { return mStartTime; }
@@ -211,6 +212,11 @@ public:
 
 private:
   bool mGotAllHeaders;
+
+  // Decoded stream version.
+  ogg_uint16_t mVersionMajor;
+  ogg_uint16_t mVersionMinor;
+  ogg_uint32_t mVersion;
  
 };
 
