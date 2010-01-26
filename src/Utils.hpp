@@ -97,6 +97,14 @@ bool ReadPage(ogg_sync_state* state,
               istream& stream,
               ogg_uint64_t& bytesRead);
 
+// Returns number of bytes to next page, or -1 on failure.
+// Fills |page| with next page.
+// Same as ReadPage(), but uses page seek instead.
+int PageSeek(ogg_sync_state* state,
+             ogg_page* page,
+             istream& stream,
+             ogg_uint64_t& bytesRead);
+
 bool IsFisheadPacket(ogg_packet* packet);
 
 bool IsFisbonePacket(ogg_packet* packet);

@@ -130,9 +130,6 @@ public:
     // Offset of page in bytes.
     ogg_int64_t offset;
     
-    // Checksum of this page.
-    ogg_uint32_t checksum;
-    
     // Number of packets that start on this page.
     int num_packets;
   };
@@ -192,8 +189,7 @@ public:
       }
 
       KeyFrameInfo k(mPages[pageno].offset,
-                     StartTime(frame.granulepos),
-                     mPages[pageno].checksum);
+                     StartTime(frame.granulepos));
 
       // Only add the keyframe to the list if it's far enough after the
       // previous keyframe.
@@ -222,7 +218,6 @@ public:
     assert((ogg_uint32_t)ogg_page_serialno(page) == mSerial);
     if (GotAllHeaders()) {
       Page record;
-      record.checksum = Checksum(page);
       record.num_packets = CountPacketStarts(page);
       record.offset = offset;
       mPages.push_back(record);
@@ -484,7 +479,7 @@ public:
         }    
 
         if (start_time > mNextKeyframeThreshold) {
-          mKeyFrames.push_back(KeyFrameInfo(offset, start_time, Checksum(page)));
+          mKeyFrames.push_back(KeyFrameInfo(offset, start_time));
           mNextKeyframeThreshold = Time(ogg_page_granulepos(page)) +
                                    gOptions.GetKeyPointInterval();
         }
@@ -676,16 +671,12 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
     offset += offset_delta;
 
     assert(p < packet->packet + packet->bytes);
-    ogg_uint32_t checksum = LEUint32(p);
-    p += 4;
-
-    assert(p < packet->packet + packet->bytes);
     ogg_int64_t time_delta = 0;
     p = ReadVariableLength(p, &time_delta);
     time += time_delta;
     ogg_int64_t time_ms = (time * time_multiplier) / time_denom;    
     
-    keypoints->push_back(KeyFrameInfo(offset, time_ms, checksum));
+    keypoints->push_back(KeyFrameInfo(offset, time_ms));
   }
   
   index[serialno] = keypoints;

@@ -43,7 +43,7 @@
 #include "Utils.hpp"
 
 #define SKELETON_VERSION_MAJOR 3
-#define SKELETON_VERSION_MINOR 2
+#define SKELETON_VERSION_MINOR 3
 
 class SkeletonEncoder {
 public:

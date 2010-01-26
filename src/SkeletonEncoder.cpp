@@ -249,11 +249,11 @@ static int bytes_required(ogg_int64_t n) {
 
 static ogg_int64_t compressed_length(const vector<KeyFrameInfo>& K) {
   ogg_int64_t length = 0;
-  length = 4 + bytes_required(K[0].mOffset) + bytes_required(K[0].mTime);
+  length = bytes_required(K[0].mOffset) + bytes_required(K[0].mTime);
   for (int i=1; i<K.size(); i++) {
     ogg_int64_t off_diff = K[i].mOffset - K[i-1].mOffset;
     ogg_int64_t time_diff = K[i].mTime - K[i-1].mTime;
-    length += 4 + bytes_required(off_diff) + bytes_required(time_diff);
+    length += bytes_required(off_diff) + bytes_required(time_diff);
   }
   return length;
 }
@@ -287,7 +287,7 @@ WriteVariableLength(unsigned char* p, const T n)
     }
     *p = b;
     p++;
-  } while (k);
+  } while (k && p < (before_p + sizeof(p)));
 
 #if _DEBUG
   ogg_int64_t t;
@@ -358,8 +358,6 @@ SkeletonEncoder::ConstructIndexPackets() {
       unsigned char* expected = p + bytes_required(off_diff);
       p = WriteVariableLength(p, off_diff);
       assert(p == expected);
-
-      p = WriteLEUint32(p, k.mChecksum);
 
       expected = p + bytes_required(time_diff);
       p = WriteVariableLength(p, time_diff);

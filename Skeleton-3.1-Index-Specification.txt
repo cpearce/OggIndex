@@ -1,2 +1,2 @@
-This has been superseeded by the Skeleton 3.2 track,
-see Skeleton-3.2-Index-Specification.txt
+This has been superseeded by the Skeleton 3.3 track,
+see Skeleton-3.3-Index-Specification.txt

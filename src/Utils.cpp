@@ -148,6 +148,50 @@ bool ReadPage(ogg_sync_state* state,
   return true;
 }
 
+// Returns nuber of bytes skipped to next page, or -1 on failure.
+int PageSeek(ogg_sync_state* state,
+             ogg_page* page,
+             istream& stream,
+             ogg_uint64_t& bytesRead)
+{
+  int retval = 0;
+  ogg_int32_t bytes = 0;
+  ogg_int32_t r = 0;
+  ogg_uint64_t intialBytesRead = bytesRead;
+  while ((r = ogg_sync_pageseek(state, page)) <= 0) {
+    if (r == 0) {
+      // Need to read more data to get to next page.
+      char* buffer = ogg_sync_buffer(state, FILE_BUFFER_SIZE);
+      assert(buffer);
+
+      stream.read(buffer, FILE_BUFFER_SIZE);
+      bytes = stream.gcount();
+      bytesRead += bytes;
+      if (bytes == 0) {
+        // End of file
+        assert(stream.eof());
+        if (intialBytesRead != bytesRead) {
+          cerr << "WARNING: Reached end of file, when expecting to find more data! "
+               << "Page header may be incorrect!" << endl;
+        }
+        return false;
+      }
+
+      ogg_int32_t ret = ogg_sync_wrote(state, bytes);
+      assert(ret == 0);
+    } else {
+      assert(r<0);
+      // We skipped -r bytes reading up to next ogg page capture.
+      retval += (-r);
+    }
+  }
+  if (r == -1) {
+    cout << "ERROR: sync failure in ReadPage()" << endl;
+    return -1;
+  }
+  return retval;
+}
+
 bool
 IsPageAtOffset(const string& filename, ogg_int64_t offset, ogg_page* page)
 {

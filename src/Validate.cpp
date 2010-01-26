@@ -596,19 +596,19 @@ bool ValidateIndexedOgg(const string& filename) {
       ogg_int64_t page_offset = keypoint.mOffset;
       ogg_int64_t end_time = -1;
       while (pres_time  == -1) {
-        if (!ReadPage(&state, &page, input, bytesRead)) {
-          cerr << "FAIL: Can't read page at offset " << page_offset << endl;
+        int skip = 0;
+        if ((skip = PageSeek(&state, &page, input, bytesRead)) != 0) {
+          if (skip == -1) {
+            cerr << "FAIL: Can't read page at offset " << page_offset << endl;
+            return false;
+          }
+          assert(skip > 0);
+          cerr << "FAIL: There's no page at offset " << page_offset
+               << " as reported by keypoint. Next page is at offset "
+               << (page_offset + skip) << endl;
           return false;
         }
         page_offset += page.header_len + page.body_len;
-        if (!checksum_checked) {
-          checksum_checked = true;
-          if (GetChecksum(&page) != keypoint.mChecksum) {
-            cerr << "FAIL: Incorrect checksum for page at byte offset "
-                 << keypoint.mOffset << endl;
-            valid = false;
-          }
-        }
         // Extract the presentation time. Decode() returns -1 if it needs
         // another page.
         if ((ogg_uint32_t)ogg_page_serialno(&page) != decoder->mSerial) {

@@ -82,15 +82,13 @@ public:
 // Stores info about a key point.
 class KeyFrameInfo {
 public:
-  KeyFrameInfo() : mOffset(0), mTime(-1), mChecksum(0) {}
+  KeyFrameInfo() : mOffset(0), mTime(-1) {}
 
-  KeyFrameInfo(ogg_int64_t offset, ogg_int64_t time, ogg_uint32_t checksum) :
+  KeyFrameInfo(ogg_int64_t offset, ogg_int64_t time) :
     mOffset(offset),
-    mTime(time),
-    mChecksum(checksum) {}
+    mTime(time) {}
   ogg_int64_t mOffset; // In bytes from beginning of file.
   ogg_int64_t mTime; // In milliseconds.
-  ogg_uint32_t mChecksum;
 };
 
 // Maps a track's serialno to its keyframe index.
