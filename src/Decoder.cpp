@@ -53,16 +53,6 @@
 // Need to index keyframe if we've not seen 1 in 64K.
 #define MIN_KEYFRAME_OFFSET (64 * 1024)
 
-static ogg_uint32_t
-Checksum(ogg_page* page)
-{
-  assert(page != 0);
-  assert(page->header != 0);
-  assert(page->header_len > 25);
-  return LEUint32(page->header + 22);
-}
-
-
 Decoder::Decoder(ogg_uint32_t serial) :
   mSerial(serial),
   mStartTime(-1),

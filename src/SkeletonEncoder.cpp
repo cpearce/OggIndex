@@ -250,7 +250,7 @@ static int bytes_required(ogg_int64_t n) {
 static ogg_int64_t compressed_length(const vector<KeyFrameInfo>& K) {
   ogg_int64_t length = 0;
   length = bytes_required(K[0].mOffset) + bytes_required(K[0].mTime);
-  for (int i=1; i<K.size(); i++) {
+  for (unsigned i=1; i<K.size(); i++) {
     ogg_int64_t off_diff = K[i].mOffset - K[i-1].mOffset;
     ogg_int64_t time_diff = K[i].mTime - K[i-1].mTime;
     length += bytes_required(off_diff) + bytes_required(time_diff);

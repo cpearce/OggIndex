@@ -592,7 +592,6 @@ bool ValidateIndexedOgg(const string& filename) {
       }
       decoder->Reset();
       ogg_int64_t pres_time = -1;
-      bool checksum_checked = false;
       ogg_int64_t page_offset = keypoint.mOffset;
       ogg_int64_t end_time = -1;
       while (pres_time  == -1) {
