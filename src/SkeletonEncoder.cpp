@@ -274,9 +274,8 @@ ReadVariableLength(unsigned char* p, ogg_int64_t* num) {
 
 template<class T>
 unsigned char*
-WriteVariableLength(unsigned char* p, const T n)
+WriteVariableLength(unsigned char* p, const unsigned char* limit, const T n)
 {
-  unsigned char* before_p = p;
   T k = n;
   do {
     unsigned char b = (unsigned char)(k & 0x7f);
@@ -287,7 +286,7 @@ WriteVariableLength(unsigned char* p, const T n)
     }
     *p = b;
     p++;
-  } while (k && p < (before_p + sizeof(p)));
+  } while (k && p < limit);
 
 #if _DEBUG
   ogg_int64_t t;
@@ -349,6 +348,7 @@ SkeletonEncoder::ConstructIndexPackets() {
 
     ogg_int64_t prev_offset = 0;
     ogg_int64_t prev_time = 0;
+    const unsigned char* limit = packet->packet + compressed_size;
     for (ogg_uint32_t j=0; j<keyframes.size(); j++) {
       const KeyFrameInfo& k = keyframes[j];
 
@@ -356,11 +356,11 @@ SkeletonEncoder::ConstructIndexPackets() {
       ogg_int64_t time_diff = k.mTime - prev_time;
 
       unsigned char* expected = p + bytes_required(off_diff);
-      p = WriteVariableLength(p, off_diff);
+      p = WriteVariableLength(p, limit, off_diff);
       assert(p == expected);
 
       expected = p + bytes_required(time_diff);
-      p = WriteVariableLength(p, time_diff);
+      p = WriteVariableLength(p, limit, time_diff);
       assert(p == expected);
 
       prev_offset = k.mOffset;
@@ -533,7 +533,9 @@ SkeletonEncoder::CorrectOffsets() {
 
     // Write the adjusted 
     offset += lengthDiff;
-    WriteVariableLength(packet->packet + INDEX_KEYPOINT_OFFSET, offset);
+    WriteVariableLength(packet->packet + INDEX_KEYPOINT_OFFSET,
+                        packet->packet + packet->bytes,
+                        offset);
 
     ogg_int64_t new_offset = 0;
     unsigned char* j = ReadVariableLength(packet->packet + INDEX_KEYPOINT_OFFSET, &new_offset);

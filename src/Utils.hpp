@@ -159,6 +159,6 @@ ReadVariableLength(unsigned char* p, ogg_int64_t* num);
 
 template<class T>
 unsigned char*
-WriteVariableLength(unsigned char* p, const T n);
+WriteVariableLength(unsigned char* p, const unsigned char* limit, const T n);
 
 #endif
