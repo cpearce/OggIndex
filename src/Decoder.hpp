@@ -105,8 +105,9 @@ enum StreamType {
   TYPE_UNKNOWN = 0,
   TYPE_VORBIS = 1,
   TYPE_THEORA = 2,
-  TYPE_SKELETON = 3,
-  TYPE_UNSUPPORTED = 4
+  TYPE_KATE = 3,
+  TYPE_SKELETON = 4,
+  TYPE_UNSUPPORTED = 5
 };
 
 // Superclass for indexer-decoder.

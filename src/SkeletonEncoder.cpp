@@ -64,7 +64,8 @@ using namespace std;
 static bool
 IsIndexable(Decoder* decoder) {
   return decoder->Type() == TYPE_VORBIS ||
-         decoder->Type() == TYPE_THEORA;
+         decoder->Type() == TYPE_THEORA ||
+         decoder->Type() == TYPE_KATE;
 }
 
 static bool
@@ -301,6 +302,7 @@ const char* sStreamType[] = {
   "Unknown",
   "Vorbis",
   "Theora",
+  "Kate",
   "Skeleton",
   "Unsupported"
 };
@@ -322,7 +324,8 @@ SkeletonEncoder::ConstructIndexPackets() {
       INDEX_KEYPOINT_OFFSET + compressed_length(keyframes);
 
     double savings = ((double)compressed_size / (double)uncompressed_size) * 100.0;
-    cout << sStreamType[mDecoders[i]->Type()] << " index uses " << uncompressed_size 
+    cout << sStreamType[mDecoders[i]->Type()] << "/" << mDecoders[i]->GetSerial()
+         << " index uses " << uncompressed_size 
          << " bytes, compresses to " << compressed_size << " (" << savings << "%)" << endl;
 
     packet->bytes = compressed_size;

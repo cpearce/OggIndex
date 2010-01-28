@@ -34,6 +34,7 @@
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
+ *   ogg.k.ogg.k <ogg.k.ogg.k@googlemail.com>
  */
  
 #include <list>
@@ -43,6 +44,9 @@
 #include <theora/theora.h>
 #include <theora/theoradec.h>
 #include <vorbis/codec.h>
+#ifdef HAVE_KATE
+#include <kate/oggkate.h>
+#endif
 #include <assert.h>
 #include <string.h>
 #include "Utils.hpp"
@@ -355,6 +359,100 @@ public:
   }
 };
 
+#ifdef HAVE_KATE
+class Kate : public VerifyDecoder {
+private:
+  
+  struct PacketInfo {
+    ogg_int64_t granulepos;
+  };
+  
+  list<PacketInfo> mBuffer;
+
+  kate_info mInfo;
+  kate_comment mComment;
+  kate_state mCtx;
+  int mNumHeaders;
+  int mHeaderPacketsRead;
+
+  ogg_int64_t GranuleRateToTime(ogg_int64_t duration) {
+    ogg_int64_t time = (1000 * mInfo.gps_denominator * duration) /
+                        mInfo.gps_numerator;
+    return time;
+  }
+
+public:
+  Kate(ogg_uint32_t serial)
+    : VerifyDecoder(serial)
+    , mNumHeaders(-1)
+    , mHeaderPacketsRead(0)
+  {
+    kate_info_init(&mInfo);
+    kate_comment_init(&mComment);
+  }
+
+  virtual ~Kate() {
+    kate_clear(&mCtx);
+  }
+  
+  virtual void Reset() {
+    mBuffer.clear(); 
+    ogg_stream_reset(&mStreamState);
+  }
+  
+  virtual const char* Type() { return "Kate"; }
+
+  // Decode all keyframes in the given page, and return the start time of
+  // the next keyframe.
+  virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
+    end_time = -1;
+    if ((ogg_uint32_t)ogg_page_serialno(page) != mSerial) {
+      return -1;
+    }
+    ogg_int64_t start_time = INT_MAX;
+
+    int shift = mInfo.granule_shift;
+    ogg_packet op;
+    int ret = ogg_stream_pagein(&mStreamState, page);
+    assert(ret == 0);
+    while ((ret = ogg_stream_packetout(&mStreamState, &op)) != 0) {
+      if (ret == -1) {
+        cout << "WARNING: Kate decoder out of sync!" << endl;
+        continue;
+      }
+      if (!mReadHeaders) {
+        ogg_int32_t ret = kate_ogg_decode_headerin(&mInfo,
+                                                   &mComment,
+                                                   &op);
+        if (ret >= 0) {
+          if (op.packet[0] == 0x80) {
+            mNumHeaders = op.packet[11];
+          }
+          mHeaderPacketsRead++;
+          mReadHeaders = (mNumHeaders > 0 && mHeaderPacketsRead == mNumHeaders);
+          if (mReadHeaders) {
+            int ret = kate_decode_init(&mCtx, &mInfo);
+            assert(ret >= 0);
+          }
+          continue;
+        } else {
+          cout << "kate_decode_headerin returned " << ret << endl;
+          return false;
+        }
+      }
+
+      start_time = GranuleRateToTime((op.granulepos >> shift) + op.granulepos - ((op.granulepos >> shift) << shift));
+      if (start_time >= 0) {
+        return start_time;
+      }
+    }
+    return start_time;
+  }
+};
+#else
+typedef void Kate;
+#endif
+
 
 
 
@@ -468,11 +566,14 @@ public:
 
 typedef map<ogg_uint32_t, VerifyDecoder*> VerifyDecoderMap;
 
-static bool ReadAllHeaders(Theora* theora, Vorbis* vorbis, Skeleton* skeleton)
+static bool ReadAllHeaders(Theora* theora, Vorbis* vorbis, Kate* kate, Skeleton* skeleton)
 {
-  return (theora || vorbis || skeleton) &&
+  return (theora || vorbis || kate || skeleton) &&
          (!theora || theora->mReadHeaders) &&
          (!vorbis || vorbis->mReadHeaders) &&
+#ifdef HAVE_KATE
+         (!kate || kate->mReadHeaders) &&
+#endif
          (!skeleton || skeleton->mReadHeaders);
 }
 
@@ -488,11 +589,12 @@ bool ValidateIndexedOgg(const string& filename) {
   ogg_uint64_t bytesRead = 0;
   Theora* theora = 0;
   Vorbis* vorbis = 0;
+  Kate* kate = 0;
   Skeleton* skeleton = 0;
   bool index_valid = true;
   ogg_uint64_t contentOffset = 0;
-
-  while (!ReadAllHeaders(theora, vorbis, skeleton) && 
+  
+  while (!ReadAllHeaders(theora, vorbis, kate, skeleton) && 
          ReadPage(&state, &page, input, bytesRead))
   {
     contentOffset += page.header_len + page.body_len;
@@ -509,6 +611,13 @@ bool ValidateIndexedOgg(const string& filename) {
       {
         vorbis = new Vorbis(serialno);
         decoders[serialno] = vorbis;
+#ifdef HAVE_KATE
+      } else if (page.body_len > 8 &&
+                 memcmp("kate\0\0\0", (const char*)page.body+1, 7) == 0)
+      {
+        kate = new Kate(serialno);
+        decoders[serialno] = kate;
+#endif
       } else if (page.body_len > 8 &&
                  strncmp("fishead", (const char*)page.body, 8) == 0)
       {
@@ -551,16 +660,23 @@ bool ValidateIndexedOgg(const string& filename) {
     itr++;
     VerifyDecoder* decoder = decoders[serialno];
 
+    if (!decoder) {
+      cerr << "WARNING: No decoder for track s="
+           << serialno << endl;
+      continue;
+    }
+
     if (v->size() == 0) {
-      cerr << "WARNING: " << decoder->Type() << " track serialno="  << serialno
+      cerr << "WARNING: " << decoder->Type() << "/" <<  serialno
            << " index has no keyframes" << endl;
       continue;
     }
 
-    cout << decoder->Type() << " track serialno=" << serialno
+    cout << decoder->Type() << "/" << serialno
          << " index has " << v->size() << " keypoints." << endl;
 
     bool valid = true;
+    ogg_int64_t prev_pres_time = 0;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
     
       KeyFrameInfo& keypoint = v->at(i);
@@ -641,12 +757,53 @@ bool ValidateIndexedOgg(const string& filename) {
              << pres_time << "," << end_time << "]" << endl;
         valid = false;
       }
+
+#ifdef HAVE_KATE
+      // The time of a Kate index entry does not necessarily match
+      // the start time of the event on the page that entry points to, e.g:
+      //
+      //                       1     1
+      // time:      0      7   1     8
+      // event 1:   +------+
+      // event 2:              +------+
+      //
+      // Here, event 1 starts at time 0, ends at time 7, event 2 starts at 11,
+      // ends at 18.
+      // The indexed points will be:
+      // time 0: point to event 1's page.
+      // time 7: point to event 2's page
+      // This is because seeking at time 7, no event is active as event 1 just
+      // ended, so event 2 is the next page that we need when starting at time
+      // 7.
+      // However, event 2's start time is 11, not 7, as there is a gap.
+      
+      // We can't just assume a kate key point is invalid if its reported time
+      // doesn't match the presentation time of the event which can be decoded
+      // from this page. We instead will consider a keypoint valid if its
+      // time is after the previous keypoints, but less than or equal to the
+      // presentation time at the current offset.
+      if (decoder == kate && keypoint.mTime != pres_time) {
+        if (keypoint.mTime > pres_time || keypoint.mTime < prev_pres_time) {
+          cerr << "FAIL: Kate keypoint " << i << " for page at offset "
+               << keypoint.mOffset << " reports start time of "
+               << keypoint.mTime << " but should be" << pres_time << endl;
+          valid = false;
+        } else {
+          cerr << "WARNING: Kate keypoint " << i << " (offset="
+               << keypoint.mOffset << ", time=" << keypoint.mTime << ")"
+               << " doesn't match time of " << pres_time
+               << ", but is it's *probably* ok..."
+               << endl;
+        }
+      }
+#endif
+      prev_pres_time = pres_time;
     }
     if (valid) {
-      cout << decoder->Type() << " track serialno=" << serialno
+      cout << decoder->Type() << "/" << serialno
            << " index is accurate." << endl;
     } else {
-      cout << "FAIL: " << decoder->Type() << " track serialno=" << serialno
+      cout << "FAIL: " << decoder->Type() << "/" << serialno
            << " index is NOT accurate." << endl;
       index_valid = false;
     }

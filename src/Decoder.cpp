@@ -34,11 +34,13 @@
  *
  * Contributor(s): 
  *   Chris Pearce <chris@pearce.org.nz>
+ *   ogg.k.ogg.k <ogg.k.ogg.k@googlemail.com>
  */
 
 #include <assert.h>
 #include <iostream>
 #include <fstream>
+#include <algorithm>
 #include <string.h>
 #include <limits.h>
 #include <stdlib.h>
@@ -46,6 +48,9 @@
 #include <theora/theora.h>
 #include <theora/theoradec.h>
 #include <vorbis/codec.h>
+#ifdef HAVE_KATE
+#include <kate/oggkate.h>
+#endif
 #include "Options.hpp"
 #include "Utils.hpp"
 #include "SkeletonEncoder.hpp"
@@ -514,6 +519,325 @@ private:
   vorbis_block mBlock;
 };
 
+#ifdef HAVE_KATE
+class KateDecoder : public Decoder {
+protected:
+
+  kate_info mInfo;
+  kate_comment mComment;
+  kate_state mCtx;
+
+  int mNumHeaders;
+  ogg_int32_t mFirstPacketno;
+  ogg_int32_t mHeadersRead;
+  ogg_int64_t mPacketCount; 
+
+public:
+
+  ogg_int64_t mNextKeyframeThreshold; // in ms
+  ogg_int64_t mGranulepos;
+
+  KateDecoder(ogg_uint32_t serial) :
+    Decoder(serial),
+    mNumHeaders(-1),
+    mFirstPacketno(-1),
+    mHeadersRead(0),
+    mPacketCount(0),
+    mNextKeyframeThreshold(-INT_MAX),
+    mGranulepos(-1)
+  {
+    kate_info_init(&mInfo);
+    kate_comment_init(&mComment);
+  }
+
+  virtual ~KateDecoder() {
+    kate_clear(&mCtx);
+    kate_info_clear(&mInfo);
+    kate_comment_clear(&mComment);
+  }
+
+  virtual StreamType Type() { return TYPE_KATE; }
+
+  virtual const char* TypeStr() { return "K"; }
+
+  virtual bool GotAllHeaders() {
+    // Kate has a variable number of header packets, specified in the first header.
+    return mNumHeaders >= 1 && mHeadersRead == mNumHeaders;
+  }
+
+  struct Page {
+    // Offset of page in bytes.
+    ogg_int64_t offset;
+    
+    // Checksum of this page.
+    ogg_uint32_t checksum;
+    
+    // Number of packets that start on this page.
+    int num_packets;
+  };
+
+  struct Frame {
+    Frame(ogg_packet& packet) :
+      packetno(packet.packetno),
+      granulepos(packet.granulepos),
+      start(-1),
+      duration(-1),
+      backlink(-1),
+      end(-1)
+    {
+      if (packet.bytes > 0 && (packet.packet[0] == 0x00 || packet.packet[0] == 0x02)) {
+        start = LEInt64(packet.packet+1);
+        duration = LEInt64(packet.packet+1+8);
+        backlink = LEInt64(packet.packet+1+16);
+        end = start+duration;
+      }
+    }
+    ogg_int64_t packetno;
+    ogg_int64_t granulepos;
+    ogg_int64_t start;
+    ogg_int64_t duration;
+    ogg_int64_t backlink;
+    ogg_int64_t end;
+  };
+  
+  // List of pages in the ogg file. We use this to determine the page which
+  // a frame exists in.
+  vector<Page> mPages;
+
+  // List of keyframes which are in the file.
+  vector<Frame> mFrames;
+
+  // Keypoint info which we'll write into the index packet.
+  vector<KeyFrameInfo> mKeyFrames;
+
+  ogg_int64_t GranuleRateToMilliseconds(ogg_int64_t duration) const {
+    return duration * 1000 *
+           mInfo.gps_denominator / mInfo.gps_numerator;
+  }
+
+  ogg_int64_t GetTime(ogg_int64_t granulepos) const {
+    ogg_int64_t base = granulepos >> mInfo.granule_shift;
+    ogg_int64_t offset = granulepos - (base << mInfo.granule_shift);
+    return GranuleRateToMilliseconds(base+offset);
+  }
+
+  struct Boundary {
+    Boundary(ogg_int64_t p, ogg_int64_t t, bool s): packetno(p), time(t), start(s) {}
+
+    bool operator==(const Boundary &other) const { return time == other.time; }
+    bool operator<(const Boundary &other) const {
+      if (time < other.time) return true;
+      if (time > other.time) return false;
+      return start && !other.start;
+    }
+
+    ogg_int64_t packetno;
+    ogg_int64_t time;
+    bool start;
+  };
+
+  ogg_int64_t FindBacklink(const std::vector<Frame> &frames, ogg_int64_t t) {
+    ogg_int64_t earliest_packetno = -1;
+    for (std::vector<Frame>::const_iterator i = frames.begin(), end = frames.end(); i != end; ++i) {
+      const Frame &frame = (*i);
+      ogg_int64_t time = GetTime(frame.granulepos);
+      if (time > t) {
+        // the frames are sorted by start time, and we're past the target time, so we'll return
+        // this frame (the first to follow the target time), as this is the best frame to seek to
+        // for that stream if there are no active events at the target time.
+        earliest_packetno = frame.packetno;
+        break;
+      }
+
+      // if the event is active, it will be the earliest as the frames are sorted by start time
+      if (t >= time && frame.end >= 0 && t < GranuleRateToMilliseconds(frame.end)) {
+        earliest_packetno = frame.packetno;
+        break;
+      }
+    }
+    return earliest_packetno;
+  }
+
+  Frame *FindFrame(ogg_int64_t packetno) {
+    for (size_t n = 0; n < mFrames.size(); ++n) {
+      if (mFrames[n].packetno == packetno) {
+        return &mFrames[n];
+      }
+    }
+    return NULL;
+  }
+
+  virtual const vector<KeyFrameInfo>& GetKeyframes() {
+    ogg_int64_t started_packetno = mFirstPacketno - 1;
+    ogg_int64_t pageno = 0, npages = mPages.size();
+    ogg_int64_t prev_keyframe_pageno = -INT_MAX;
+    ogg_int64_t prev_keyframe_start_time = -INT_MAX;
+
+    // Make a list of all boundaries - start or end of events
+    std::vector<Boundary> boundaries;
+    boundaries.reserve(mFrames.size()*2);
+    for (size_t n = 0; n < mFrames.size(); ++n) {
+      ogg_int64_t start = GetTime(mFrames[n].granulepos);
+      boundaries.push_back(Boundary(FindBacklink(mFrames, start), start, true));
+      if (mFrames[n].end >= 0) {
+        ogg_int64_t end = GranuleRateToMilliseconds(mFrames[n].end);
+        boundaries.push_back(Boundary(FindBacklink(mFrames, end), end, false));
+      }
+    }
+
+    // sort boundaries, and eliminate duplicates
+    std::sort(boundaries.begin(), boundaries.end());
+    std::vector<Boundary>::const_iterator end = std::unique(boundaries.begin(), boundaries.end());
+
+    // iterate through boundaries and work out the appropriate page
+    for (std::vector<Boundary>::const_iterator i = boundaries.begin(); i != end; ++i) {
+      ogg_int64_t packetno = (*i).packetno;
+
+      if (packetno < 0) {
+        continue;
+      }
+
+      // Find matching page
+      while (pageno < npages &&
+             started_packetno + mPages[pageno].num_packets < packetno)
+      {
+        started_packetno += mPages[pageno].num_packets;
+        pageno++;  
+      } // pages
+      assert(pageno < npages);
+      assert(started_packetno < packetno &&
+             started_packetno + mPages[pageno].num_packets >= packetno);
+
+      if (pageno == prev_keyframe_pageno) {
+        // Only consider the pages' first key point.
+        continue;
+      }
+
+      KeyFrameInfo k(mPages[pageno].offset,
+                     (*i).time);
+
+      // Only add the keyframe to the list if it's far enough after the
+      // previous keyframe.
+      if (k.mTime >= prev_keyframe_start_time + gOptions.GetKeyPointInterval()) {
+        prev_keyframe_start_time = k.mTime;
+        mKeyFrames.push_back(k);
+      }
+      prev_keyframe_pageno = pageno;
+    }
+
+    return mKeyFrames;
+  }
+
+  bool Decode(ogg_page* page, ogg_int64_t offset) {
+    assert((ogg_uint32_t)ogg_page_serialno(page) == mSerial);
+    if (GotAllHeaders()) {
+      Page record;
+      record.num_packets = CountPacketStarts(page);
+      record.offset = offset;
+      mPages.push_back(record);
+    }
+ 
+    int ret = ogg_stream_pagein(&mState, page);
+    assert(ret == 0);
+
+    ogg_packet packet;
+    int num_packets = 0;
+    while ((ret = ogg_stream_packetout(&mState, &packet)) != 0) {
+      if (ret == -1) {
+        cerr << "WARNING: Lost sync decoding packets on kate page "
+             << mPages.size() << endl;
+        continue;
+      }
+      num_packets++;
+      if (!GotAllHeaders()) {
+        // Read Headers...
+        ret = kate_ogg_decode_headerin(&mInfo,
+                                      &mComment,
+                                      &packet);
+        assert(ret >= 0);
+        if (ret >= 0) {
+          // Read Kate header.
+          mHeadersRead++;
+
+          // if it's the first header, extract the number of headers
+          if (packet.packet[0] == 0x80) {
+            mNumHeaders = packet.packet[11];
+          }
+        }
+        if (GotAllHeaders()) {
+          // Read all headers, setup decoder state.
+          int ret = kate_decode_init(&mCtx, &mInfo);
+          assert(ret >= 0);
+        }
+        continue;
+      }
+
+      if (mFirstPacketno < 0) {
+        mFirstPacketno = packet.packetno;
+      }
+
+      // Get granpos, and deduce current time, and backlink time
+      if (packet.granulepos >= 0) {
+        Frame f(packet);
+        mFrames.push_back(f);
+
+        DumpPacket(f);
+
+        ogg_int64_t base = packet.granulepos >> mInfo.granule_shift;
+        ogg_int64_t offset = packet.granulepos - (base << mInfo.granule_shift);
+        ogg_int64_t start_time = GranuleRateToMilliseconds(base+offset);
+
+        if (mStartTime == -1) {
+          mStartTime = start_time;
+        }
+        if (mStartTime > mEndTime)
+          mEndTime = mStartTime;
+
+        // update end time from data packets
+        if (packet.bytes > 0 && (packet.packet[0] == 0x00 || packet.packet[0] == 0x02)) {
+          ogg_int64_t start = LEInt64(packet.packet+1);
+          ogg_int64_t duration = LEInt64(packet.packet+1+8);
+          ogg_int64_t end = GranuleRateToMilliseconds(start+duration);
+          if (end > mEndTime)
+            mEndTime = end;
+        }
+      }
+
+    } // end while packetout.
+
+    if (num_packets != ogg_page_packets(page)) {
+      cerr << "WARNING: Fewer packets finished on kate page "
+           << mPages.size() << " than expected." << endl;
+    }
+    return true;
+  }
+
+  void DumpPacket(Frame& f) {
+    if (!gOptions.GetDumpPackets() &&
+        !gOptions.GetDumpKeyPackets())
+      return;
+    cout << "[K] " << "event"
+         << " time_ms=[" << GranuleRateToMilliseconds(f.start) << ","
+         << GranuleRateToMilliseconds(f.end) << "] granulepos=" << f.granulepos
+         << " packetno=" << f.packetno << endl;
+  }  
+
+  virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
+    return (!GotAllHeaders()) ? -1 : (ogg_int64_t)(1000*kate_granule_time(&mInfo, granulepos)+0.5f);
+  }
+
+  virtual FisboneInfo GetFisboneInfo() {
+    FisboneInfo f;
+    f.mGranNumer = mInfo.gps_numerator;
+    f.mGranDenom = mInfo.gps_denominator;
+    f.mPreroll = 0;
+    f.mGranuleShift = mInfo.granule_shift;
+    f.mContentType = "Content-Type: application/x-kate\r\n";
+    assert(f.mContentType.size() == 34);
+    return f;
+  }
+};
+#endif
 
 SkeletonDecoder::SkeletonDecoder(ogg_uint32_t serial) :
   Decoder(serial),
@@ -612,6 +936,12 @@ Decoder* Decoder::Create(ogg_page* page)
              strncmp("vorbis", (const char*)page->body+1, 6) == 0)
   {
     return new VorbisDecoder(serialno);
+#ifdef HAVE_KATE
+  } else if (page->body_len > 8 &&
+             memcmp("kate\0\0\0", (const char*)page->body+1, 7) == 0)
+  {
+    return new KateDecoder(serialno);
+#endif
   } else if (page->body_len > 8 &&
              strncmp("fishead", (const char*)page->body, 8) == 0)
   {
