@@ -355,13 +355,14 @@ public:
   }
 
   void DumpPacket(Frame& f) {
-    if (!gOptions.GetDumpPackets() &&
-        !gOptions.GetDumpKeyPackets())
-      return;
-    cout << "[T] " << (f.is_keyframe ? "keyframe" : "frame")
-         << " time_ms=[" << StartTime(f.granulepos) << ","
-         << EndTime(f.granulepos) << "] granulepos=" << f.granulepos
-         << " packetno=" << f.packetno << endl;
+    if (gOptions.GetDumpPackets() ||
+        (f.is_keyframe && gOptions.GetDumpKeyPackets()))
+    {
+      cout << "[T] " << (f.is_keyframe ? "keyframe" : "frame")
+           << " time_ms=[" << StartTime(f.granulepos) << ","
+           << EndTime(f.granulepos) << "] granulepos=" << f.granulepos
+           << " packetno=" << f.packetno << endl;
+    }
   }  
 
   virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
