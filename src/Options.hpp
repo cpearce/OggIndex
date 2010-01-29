@@ -70,7 +70,7 @@ private:
   void PrintHelp();
 
   // 
-  bool DoParse(int argc, char** argv);
+  bool DoParse(int argc, char** argv, const char** error);
   
   bool mDumpPackets;
   bool mDumpKeyPackets;

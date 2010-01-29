@@ -37,6 +37,7 @@
  */
 
 #include "Options.hpp"
+#include "SkeletonEncoder.hpp"
 
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -87,7 +88,8 @@ bool Options::GetDumpPages() {
 
 void Options::PrintHelp() {
   cout
-    << "OggIndex " << VERSION << endl
+    << "OggIndex " << VERSION << " (Skeleton " << SKELETON_VERSION_MAJOR
+    << "." << SKELETON_VERSION_MAJOR << ")" << endl
     << endl
     << "Indexes an Ogg file to provide allow faster seeking." << endl
     << endl
@@ -127,10 +129,13 @@ FileExists(const char* filename) {
 }
 
 bool Options::Parse(int argc, char** argv) {
-  if (!DoParse(argc, argv)) {
+  const char* error = 0;
+  if (!DoParse(argc, argv, &error)) {
     PrintHelp();
+    cout << error << endl;
     return false;
   }
+  cout << "Writing output to '" << mOutputFilename.c_str() << "'" << endl;
   return true;
 }
 
@@ -144,7 +149,7 @@ OutputFilename(string input) {
   return input.insert(dotIndex, ".indexed");
 }
 
-bool Options::DoParse(int argc, char** argv) {
+bool Options::DoParse(int argc, char** argv, const char** error) {
 
   for (ogg_int32_t argIndex=1; argIndex < argc; argIndex++) {
     const char* arg = argv[argIndex];
@@ -156,7 +161,7 @@ bool Options::DoParse(int argc, char** argv) {
 
     if (strcmp(arg, "-d") == 0) {
       if (mDumpKeyPackets) {
-        cerr << "ERROR: You can't use -d and -k at the same time." << endl;
+        *error = "ERROR: You can't use -d and -k at the same time.";
         return false;
       }
       mDumpPackets = true;
@@ -165,7 +170,7 @@ bool Options::DoParse(int argc, char** argv) {
 
     if (strcmp(arg, "-k") == 0) {
       if (mDumpPackets) {
-        cerr << "ERROR: You can't use -d and -k at the same time." << endl;
+        *error = "ERROR: You can't use -d and -k at the same time.";
         return false;
       }
       mDumpKeyPackets = true;
@@ -184,7 +189,7 @@ bool Options::DoParse(int argc, char** argv) {
 
     if (strcmp(arg, "-o") == 0) {
       if (argIndex+1 == argc || IsArgument(argv[argIndex+1])) {
-        cerr << "ERROR: You must specify an output filename with '-o' argument" << endl;
+        *error = "ERROR: You must specify an output filename with '-o' argument";
         return false;
       }
       mOutputFilename = argv[argIndex+1];
@@ -195,7 +200,7 @@ bool Options::DoParse(int argc, char** argv) {
     if (strcmp(arg, "-i") == 0) {
       ogg_int32_t interval = 0;
       if (argIndex+1 == argc || IsArgument(argv[argIndex+1]) ||  (interval = atoi(argv[argIndex+1])) == 0) {
-        cerr << "ERROR: You must specify an integer interval in ms with '-i' argument" << endl;
+        *error = "ERROR: You must specify an integer interval in ms with '-i' argument";
         return false;
       }
       mKeyPointInterval = interval;
@@ -204,13 +209,13 @@ bool Options::DoParse(int argc, char** argv) {
     }
 
     if (!mInputFilename.empty()) {
-      cerr << "ERROR: You cannot specify more than one input file" << endl;
+      *error = "ERROR: You cannot specify more than one input file";
       return false;
     }
 
     // Assume argument is input filename.
     if (!FileExists(argv[argIndex])) {
-      cerr << "ERROR: Input file '" << argv[argIndex] << "' does not exist" << endl;
+      *error = "ERROR: Input file does not exist";
       return false;
     }
 
@@ -220,16 +225,15 @@ bool Options::DoParse(int argc, char** argv) {
   if (mOutputFilename.empty()) {
     // No output filename specified, use input.indexed.extension.
     mOutputFilename = OutputFilename(mInputFilename);
-    cout << "Writing output to '" << mOutputFilename.c_str() << "'" << endl;
   }
 
   if (mInputFilename.compare(mOutputFilename) == 0) {
-    cerr << "ERROR: output filename must be different from the input filename" << endl;
+    *error = "ERROR: output filename must be different from the input filename";
     return false;
   }
 
   if (mInputFilename.empty()) {
-    cerr << "ERROR: specify input filename" << endl;
+    *error = "ERROR: specify input filename";
     return false;
   }
 
