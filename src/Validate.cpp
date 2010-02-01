@@ -636,6 +636,11 @@ bool ValidateIndexedOgg(const string& filename) {
     }
   }
 
+  if (!skeleton) {
+    cerr << "FAIL: No skeleton track so therefore no keyframe indexes!" << endl;
+    return false;
+  }
+
   if (skeleton->mContentOffset != contentOffset) {
     cerr << "FAIL: skeleton header's reported content offset (" << skeleton->mContentOffset
          << ") does not match actual content offset (" << contentOffset << ")" << endl;
