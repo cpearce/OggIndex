@@ -51,6 +51,9 @@ using namespace std;
 // of bytes required to encode their maximum values with variable byte encoding.
 #define MAX_KEY_POINT_SIZE 24
 
+// Minimum possible size of a compressed keypoint.
+#define MIN_KEY_POINT_SIZE 2
+
 // Magic bytes for index packet.
 #define HEADER_MAGIC "index"
 #define HEADER_MAGIC_LEN (sizeof(HEADER_MAGIC) / sizeof(HEADER_MAGIC[0]))

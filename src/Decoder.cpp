@@ -958,14 +958,19 @@ bool DecodeIndex(KeyFrameIndex& index, ogg_packet* packet) {
   ogg_int64_t time_denom = LEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET);
   ogg_int64_t time_multiplier = 1000;
 
-  // Check that the packet's not smaller or significantly larger than
+  // Ensure that the packet's not smaller or significantly larger than
   // we expect. These cases denote a malicious or invalid num_key_points
   // field.
-  ogg_int64_t max_packet_size = INDEX_KEYPOINT_OFFSET + numKeyPoints * MAX_KEY_POINT_SIZE;
-  if (packet->bytes > max_packet_size) {
+  ogg_int64_t min_packet_size = INDEX_KEYPOINT_OFFSET + numKeyPoints * MIN_KEY_POINT_SIZE;
+  if (packet->bytes < min_packet_size) {
+    // Packet is less than the theoretical minimum size. This means that the
+    // num_key_points field is too large for the packet to possibly contain as
+    // many packets as it claims to, so the num_key_points field is probably
+    // malicious. Don't try decoding this file, we may run out of memory.
     cerr << "WARNING: Possibly malicious number of key points reported in index packet." << endl;
     return false;
   }
+  ogg_int64_t max_packet_size = INDEX_KEYPOINT_OFFSET + numKeyPoints * MAX_KEY_POINT_SIZE;
   if (max_packet_size > INT_MAX) {
     cerr << "ERROR: I can't handle index sizes greater than 2^32." << endl;
     return false;
