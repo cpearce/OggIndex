@@ -132,6 +132,7 @@ public:
     : VerifyDecoder(serial)
     , mSetup(0)
     , mHeaderPacketsRead(0)
+    , mGranulepos(-1)
   {
     th_info_init(&mInfo);
     th_comment_init(&mComment);
