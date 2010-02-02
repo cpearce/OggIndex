@@ -403,6 +403,10 @@ public:
   
   virtual const char* Type() { return "Kate"; }
 
+  ogg_int64_t GetBaseTime(ogg_page* page) {
+    return GranuleRateToTime(ogg_page_granulepos(page) >> kate_granule_shift(&mInfo));
+  }
+
   // Decode all keyframes in the given page, and return the start time of
   // the next keyframe.
   virtual ogg_int64_t Decode(ogg_page* page, ogg_int64_t& end_time) {
@@ -681,19 +685,7 @@ bool ValidateIndexedOgg(const string& filename) {
     cout << decoder->Type() << "/" << serialno
          << " index has " << v->size() << " keypoints." << endl;
 
-#ifdef HAVE_KATE
-    // Can't yet validate Kate, as its events can overlap, and can be
-    // indexed by their end time, so keypoints don't always have the same
-    // presentation time as the page they index.
-    if (strncmp(decoder->Type(), "Kate", 5) == 0) {
-      cerr << "WARNING: can't yet validate Kate streams, not validating..."
-           << endl;
-      continue;
-    }
-#endif
-
     bool valid = true;
-    ogg_int64_t prev_pres_time = 0;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
     
       KeyFrameInfo& keypoint = v->at(i);
@@ -775,7 +767,20 @@ bool ValidateIndexedOgg(const string& filename) {
         valid = false;
       }
 
-      prev_pres_time = pres_time;
+#ifdef HAVE_KATE
+      if (decoder == kate) {
+        // We get the granpos of the page linked to, and check that the base part of the granpos
+        // is higher or equal to the time of the keypoint
+        ogg_int64_t base_time = kate->GetBaseTime(&page);
+        if (base_time > pres_time) {
+          cerr << "FAIL: kate keypoint " << i << " for page at offset "
+               << keypoint.mOffset << " reports start time of "
+               << keypoint.mTime << " but should be greater of equal to "
+               << base_time << endl;
+          valid = false;
+        }
+      }
+#endif
     }
     if (valid) {
       cout << decoder->Type() << "/" << serialno
