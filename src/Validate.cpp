@@ -76,7 +76,7 @@ public:
   
   virtual void Reset() = 0;
   
-  virtual const char* Type() { return "Unknown"; }  
+  virtual const char* Type() { return "Unknown"; }
 };
 
 
@@ -680,6 +680,17 @@ bool ValidateIndexedOgg(const string& filename) {
     cout << decoder->Type() << "/" << serialno
          << " index has " << v->size() << " keypoints." << endl;
 
+#ifdef HAVE_KATE
+    // Can't yet validate Kate, as its events can overlap, and can be
+    // indexed by their end time, so keypoints don't always have the same
+    // presentation time as the page they index.
+    if (strncmp(decoder->Type(), "Kate", 5) == 0) {
+      cerr << "WARNING: can't yet validate Kate streams, not validating..."
+           << endl;
+      continue;
+    }
+#endif
+
     bool valid = true;
     ogg_int64_t prev_pres_time = 0;
     for (ogg_uint32_t i=0; i<v->size(); i++) {
@@ -763,45 +774,6 @@ bool ValidateIndexedOgg(const string& filename) {
         valid = false;
       }
 
-#ifdef HAVE_KATE
-      // The time of a Kate index entry does not necessarily match
-      // the start time of the event on the page that entry points to, e.g:
-      //
-      //                       1     1
-      // time:      0      7   1     8
-      // event 1:   +------+
-      // event 2:              +------+
-      //
-      // Here, event 1 starts at time 0, ends at time 7, event 2 starts at 11,
-      // ends at 18.
-      // The indexed points will be:
-      // time 0: point to event 1's page.
-      // time 7: point to event 2's page
-      // This is because seeking at time 7, no event is active as event 1 just
-      // ended, so event 2 is the next page that we need when starting at time
-      // 7.
-      // However, event 2's start time is 11, not 7, as there is a gap.
-      
-      // We can't just assume a kate key point is invalid if its reported time
-      // doesn't match the presentation time of the event which can be decoded
-      // from this page. We instead will consider a keypoint valid if its
-      // time is after the previous keypoints, but less than or equal to the
-      // presentation time at the current offset.
-      if (decoder == kate && keypoint.mTime != pres_time) {
-        if (keypoint.mTime > pres_time || keypoint.mTime < prev_pres_time) {
-          cerr << "FAIL: Kate keypoint " << i << " for page at offset "
-               << keypoint.mOffset << " reports start time of "
-               << keypoint.mTime << " but should be" << pres_time << endl;
-          valid = false;
-        } else {
-          cerr << "WARNING: Kate keypoint " << i << " (offset="
-               << keypoint.mOffset << ", time=" << keypoint.mTime << ")"
-               << " doesn't match time of " << pres_time
-               << ", but is it's *probably* ok..."
-               << endl;
-        }
-      }
-#endif
       prev_pres_time = pres_time;
     }
     if (valid) {
