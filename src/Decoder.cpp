@@ -209,6 +209,15 @@ public:
            mInfo.fps_denominator / mInfo.fps_numerator;
   }
 
+  const char* TheoraHeaderType(ogg_packet* packet) {
+    switch (packet->packet[0]) {
+      case 0x80: return "Ident";
+      case 0x81: return "Comment";
+      case 0x82: return "Setup";
+      default: return "UNKNOWN";
+    }
+  }
+
   bool Decode(ogg_page* page, ogg_int64_t offset) {
     assert((ogg_uint32_t)ogg_page_serialno(page) == mSerial);
     if (GotAllHeaders()) {
@@ -246,6 +255,13 @@ public:
           // Read all headers, setup decoder context.
           mCtx = th_decode_alloc(&mInfo, mSetup);
           assert(mCtx != NULL);
+        }
+        if (gOptions.GetDumpPackets()) {
+          cout << "[T] ver="
+               << (int)mInfo.version_major << "."
+               << (int)mInfo.version_minor << "."
+               << (int)mInfo.version_subminor << " "
+               << TheoraHeaderType(&packet) << " packet" << endl;
         }
         continue;
       }      
@@ -411,6 +427,15 @@ public:
     return (1000 * granulepos) / mDsp.vi->rate;
   }
 
+  const char* VorbisHeaderType(ogg_packet* packet) {
+    switch (packet->packet[0]) {
+      case 0x1: return "Ident";
+      case 0x3: return "Comment";
+      case 0x5: return "Setup";
+      default: return "UNKNOWN";
+    }
+  }
+
   bool Decode(ogg_page* page, ogg_int64_t offset) {
     if (GotAllHeaders()) {
       // Reset the vorbis syntheis. This simulates what happens when we seek
@@ -433,6 +458,11 @@ public:
         ogg_int32_t ret = vorbis_synthesis_headerin(&mInfo, &mComment, &packet);
         if (ret == 0) {
           mHeadersRead++;
+        }
+        if (gOptions.GetDumpPackets()) {
+          cout << "[V] ver="
+               << (int)mInfo.version << " "
+               << VorbisHeaderType(&packet) << " packet" << endl;
         }
         if (GotAllHeaders()) {
           ret = vorbis_synthesis_init(&mDsp, &mInfo);
