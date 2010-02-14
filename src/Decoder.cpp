@@ -759,6 +759,21 @@ public:
     return mKeyFrames;
   }
 
+  const char* KateHeaderType(ogg_packet* packet) {
+    switch (packet->packet[0]) {
+      case 0x80: return "Ident";
+      case 0x81: return "Comment";
+      case 0x82: return "Regions";
+      case 0x83: return "Styles";
+      case 0x84: return "Curves";
+      case 0x85: return "Motions";
+      case 0x86: return "Palettes";
+      case 0x87: return "Bitmaps";
+      case 0x88: return "Fonts";
+      default: return "UNKNOWN";
+    }
+  }
+
   bool Decode(ogg_page* page, ogg_int64_t offset) {
     assert((ogg_uint32_t)ogg_page_serialno(page) == mSerial);
     if (GotAllHeaders()) {
@@ -799,6 +814,12 @@ public:
           // Read all headers, setup decoder state.
           int ret = kate_decode_init(&mCtx, &mInfo);
           assert(ret >= 0);
+        }
+        if (gOptions.GetDumpPackets()) {
+          cout << "[K] ver="
+               << (int)mInfo.bitstream_version_major << "."
+               << (int)mInfo.bitstream_version_minor << " "
+               << KateHeaderType(&packet) << " packet" << endl;
         }
         continue;
       }
