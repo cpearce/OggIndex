@@ -133,10 +133,12 @@ public:
     Frame(ogg_packet& packet) :
       packetno(packet.packetno),
       granulepos(packet.granulepos),
-      is_keyframe(th_packet_iskeyframe(&packet) != 0) {}
+      is_keyframe(th_packet_iskeyframe(&packet) != 0),
+      e_o_s(packet.e_o_s != 0) {}
     ogg_int64_t packetno;
     ogg_int64_t granulepos;
     bool is_keyframe;
+    bool e_o_s;
   };
   
   // List of pages in the ogg file. We use this to determine the page which
@@ -261,7 +263,9 @@ public:
                << (int)mInfo.version_major << "."
                << (int)mInfo.version_minor << "."
                << (int)mInfo.version_subminor << " "
-               << TheoraHeaderType(&packet) << " packet" << endl;
+               << TheoraHeaderType(&packet) << " packet"
+               << (packet.e_o_s ? " eos" : "")
+               << endl;
         }
         continue;
       }      
@@ -377,7 +381,9 @@ public:
       cout << "[T] " << (f.is_keyframe ? "keyframe" : "frame")
            << " time_ms=[" << StartTime(f.granulepos) << ","
            << EndTime(f.granulepos) << "] granulepos=" << f.granulepos
-           << " packetno=" << f.packetno << endl;
+           << " packetno=" << f.packetno
+           << (f.e_o_s ? " eos" : "")
+           << endl;
     }
   }  
 
@@ -462,7 +468,9 @@ public:
         if (gOptions.GetDumpPackets()) {
           cout << "[V] ver="
                << (int)mInfo.version << " "
-               << VorbisHeaderType(&packet) << " packet" << endl;
+               << VorbisHeaderType(&packet) << " packet"
+               << (packet.e_o_s ? " eos" : "")
+               << endl;
         }
         if (GotAllHeaders()) {
           ret = vorbis_synthesis_init(&mDsp, &mInfo);
@@ -501,7 +509,9 @@ public:
         if (gOptions.GetDumpKeyPackets() || gOptions.GetDumpPackets()) {
           cout << "[V] sample time_ms=[" << start_time << "," << end_time
                << "] granulepos=[" << start_granule << ","
-               << packet.granulepos << "]" << endl;
+               << packet.granulepos << "]"
+               << (packet.e_o_s ? " eos" : "")
+               << endl;
         }    
 
         if (start_time > mNextKeyframeThreshold) {
@@ -614,7 +624,8 @@ public:
       start(-1),
       duration(-1),
       backlink(-1),
-      end(-1)
+      end(-1),
+      e_o_s(packet.e_o_s != 0)
     {
       if (packet.bytes > 0 && (packet.packet[0] == 0x00 || packet.packet[0] == 0x02)) {
         start = LEInt64(packet.packet+1);
@@ -629,6 +640,7 @@ public:
     ogg_int64_t duration;
     ogg_int64_t backlink;
     ogg_int64_t end;
+    bool e_o_s;
   };
   
   // List of pages in the ogg file. We use this to determine the page which
@@ -819,7 +831,9 @@ public:
           cout << "[K] ver="
                << (int)mInfo.bitstream_version_major << "."
                << (int)mInfo.bitstream_version_minor << " "
-               << KateHeaderType(&packet) << " packet" << endl;
+               << KateHeaderType(&packet) << " packet"
+               << (packet.e_o_s ? " eos" : "")
+               << endl;
         }
         continue;
       }
@@ -871,7 +885,9 @@ public:
     cout << "[K] " << "event"
          << " time_ms=[" << GranuleRateToMilliseconds(f.start) << ","
          << GranuleRateToMilliseconds(f.end) << "] granulepos=" << f.granulepos
-         << " packetno=" << f.packetno << endl;
+         << " packetno=" << f.packetno
+         << (f.e_o_s ? " eos" : "")
+         << endl;
   }  
 
   virtual ogg_int64_t GranuleposToTime(ogg_int64_t granulepos) {
