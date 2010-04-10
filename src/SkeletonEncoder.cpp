@@ -250,6 +250,9 @@ static int bytes_required(ogg_int64_t n) {
 
 static ogg_int64_t compressed_length(const vector<KeyFrameInfo>& K) {
   ogg_int64_t length = 0;
+  if (K.size() == 0) {
+    return 0;
+  }
   length = bytes_required(K[0].mOffset) + bytes_required(K[0].mTime);
   for (unsigned i=1; i<K.size(); i++) {
     ogg_int64_t off_diff = K[i].mOffset - K[i-1].mOffset;
@@ -476,6 +479,9 @@ SkeletonEncoder::CorrectOffsets() {
     }
 
     unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
+    if (p >= packet->packet + packet->bytes) {
+      continue;
+    }
     ogg_int64_t offset = 0;
     p = ReadVariableLength(p, &offset);
 
@@ -502,6 +508,9 @@ SkeletonEncoder::CorrectOffsets() {
     }
 
     unsigned char* p = packet->packet + INDEX_KEYPOINT_OFFSET;
+    if (p >= packet->packet + packet->bytes) {
+      continue;
+    }
     ogg_int64_t offset = 0;
     p = ReadVariableLength(p, &offset);
 

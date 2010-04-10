@@ -143,6 +143,13 @@ int main(int argc, char** argv)
     offset += length;
     memset(&page, 0, sizeof(ogg_page));
   }
+  if (!gotAllHeaders) {
+    // We've not completely read all the headers, assume the end of the last
+    // page we've read is the end of headers. This will turn into the content
+    // offset. The input file is probably corrupt.
+    cout << "WARNING: Couldn't successfully read all header packets!" << endl;
+    endOfHeaders = offset;
+  }
 
   const ogg_int64_t fileLength = bytesRead;
   assert(input.eof());

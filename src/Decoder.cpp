@@ -155,7 +155,7 @@ public:
     // Construct list of keyframes from page and frame info lists.
     // Need to determine frame start offsets and fill key points array.
 
-    if (mKeyFrames.size() > 0) {
+    if (mKeyFrames.size() > 0 || mFrames.size() == 0) {
       return mKeyFrames;
     }
 

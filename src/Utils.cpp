@@ -121,10 +121,9 @@ bool ReadPage(ogg_sync_state* state,
   ogg_int32_t bytes = 0;
   ogg_int32_t r = 0;
   ogg_uint64_t intialBytesRead = bytesRead;
-  while ((r = ogg_sync_pageout(state, page)) == 0) {
+  while ((r = ogg_sync_pageout(state, page)) != 1) {
     char* buffer = ogg_sync_buffer(state, FILE_BUFFER_SIZE);
     assert(buffer);
-
     stream.read(buffer, FILE_BUFFER_SIZE);
     bytes = stream.gcount();
     bytesRead += bytes;
@@ -137,13 +136,8 @@ bool ReadPage(ogg_sync_state* state,
       }
       return false;
     }
-
     ogg_int32_t ret = ogg_sync_wrote(state, bytes);
     assert(ret == 0);
-  }
-  if (r == -1) {
-    cout << "ERROR: sync failure in ReadPage()" << endl;
-    return false;
   }
   return true;
 }
