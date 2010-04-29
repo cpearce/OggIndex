@@ -1,7 +1,7 @@
 OggIndex - Indexes ogg theora/vorbis files for faster seeking.
 OggIndexValid - Validates a file's keyframe index.
 
-See Skeleton-3.1-Index-Specification.txt for index format details.
+See Skeleton-4.0-Index-Specification.txt for index format details.
 
 BUILDING ON LINUX
 
