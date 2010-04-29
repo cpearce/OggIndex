@@ -243,7 +243,9 @@ template<class T>
 unsigned char*
 WriteVariableLength(unsigned char* p, const unsigned char* limit, const T n)
 {
+  #if _DEBUG
   unsigned char* before_p = p;
+  #endif
   T k = n;
   do {
     unsigned char b = (unsigned char)(k & 0x7f);
