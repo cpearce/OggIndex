@@ -399,3 +399,19 @@ LEUint16(unsigned const char* p) {
                    (p[1] << 8);
   return i;  
 }
+
+void Tokenize(const string& str,
+              vector<string>& tokens,
+              const string& delimiter)
+{
+  string::size_type matchStart = 0;
+  string::size_type matchEnd = str.find(delimiter, matchStart);
+  while (matchEnd != string::npos && matchStart != matchEnd)
+  {
+    // Found a token, add it to the vector.
+    tokens.push_back(str.substr(matchStart, matchEnd - matchStart));
+    matchStart = matchEnd + delimiter.size();
+    matchEnd = str.find(delimiter, matchStart);
+  }
+}
+

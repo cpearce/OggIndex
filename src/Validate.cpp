@@ -465,15 +465,11 @@ class Skeleton : public VerifyDecoder {
 public:
 
   KeyFrameIndex mIndex;
-  ogg_int64_t mStartTime; // in ms
-  ogg_int64_t mEndTime; // in ms
   ogg_int64_t mFileLength; // in bytes.
   ogg_uint64_t mContentOffset; // in bytes.
 
   Skeleton(ogg_uint32_t serial)
     : VerifyDecoder(serial)
-    , mStartTime(-1)
-    , mEndTime(-1)
     , mFileLength(-1)
   {
   }
@@ -505,24 +501,12 @@ public:
         ogg_uint16_t ver_maj = LEUint16(op.packet + SKELETON_VERSION_MAJOR_OFFSET);
         ogg_uint16_t ver_min = LEUint16(op.packet + SKELETON_VERSION_MINOR_OFFSET);
         ogg_uint32_t version = SKELETON_VERSION(ver_maj, ver_min);
-        if (version < SKELETON_VERSION(3,0) ||
-            version >= SKELETON_VERSION(4,0)) { 
+        if (version != SKELETON_VERSION(4,0)) { 
           cerr << "FAIL: Skeleton version " << ver_maj << "." <<ver_min   
                << " detected. I can only validate version "
                << SKELETON_VERSION_MAJOR << "." << SKELETON_VERSION_MINOR << endl;
           exit(-1);
         }
-
-        // Decode the 3.x header fields, for validation later.
-        // TODO: How can I validate these further?
-        ogg_int64_t start_num = LEUint64(op.packet + SKELETON_FIRST_NUMER_OFFSET);
-        ogg_int64_t start_denom = LEUint64(op.packet + SKELETON_FIRST_DENOM_OFFSET);
-        mStartTime = (start_denom == 0) ? -1 : (start_num * 1000) / start_denom;
-
-        ogg_int64_t last_num = LEUint64(op.packet + SKELETON_LAST_NUMER_OFFSET);
-        ogg_int64_t last_denom = LEUint64(op.packet + SKELETON_LAST_DENOM_OFFSET);
-        mEndTime = (last_denom == 0) ? -1 : (last_num * 1000) / last_denom;
-
         mContentOffset = LEUint64(op.packet + SKELETON_CONTENT_OFFSET);
         if (mContentOffset == 0) {
           cerr << "Verification Failure: content offset is 0" << endl;
@@ -530,13 +514,6 @@ public:
         }
 
         mFileLength = LEUint64(op.packet + SKELETON_FILE_LENGTH_OFFSET);
-
-        if (mEndTime <= mStartTime) {
-          cerr << "Verification Failure: end_time (" << mEndTime
-               << ") <= start_time (" << mStartTime << ")." << endl;
-          return false;
-        }
-        
         continue;
       }
       

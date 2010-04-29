@@ -52,14 +52,11 @@
 
 using namespace std;
 
-
 #define SKELETON_3_0_HEADER_LENGTH 64
-#define SKELETON_3_2_HEADER_LENGTH 112
+#define SKELETON_4_0_HEADER_LENGTH 80
 #define FISBONE_MAGIC "fisbone"
 #define FISBONE_MAGIC_LEN (sizeof(FISBONE_MAGIC) / sizeof(FISBONE_MAGIC[0]))
-#define FISBONE_BASE_SIZE 52
-#define FISBONE_MESSAGE_HEADER_OFFSET 44
-
+#define FISBONE_BASE_SIZE 56
 
 static bool
 IsIndexable(Decoder* decoder) {
@@ -123,33 +120,6 @@ SkeletonEncoder::~SkeletonEncoder() {
   ClearIndexPages();
 }
 
-
-static ogg_int64_t
-GetMinStartTime(vector<Decoder*>& streams) 
-{
-  ogg_int64_t m = LLONG_MAX;
-  for (ogg_uint32_t i=0; i<streams.size(); i++) {
-    ogg_int64_t t = streams[i]->GetStartTime();
-    if (t < m && t > -1) {
-      m = t;
-    }
-  }
-  return m;
-}
-
-static ogg_int64_t
-GetMaxEndtime(vector<Decoder*>& streams)
-{
-  ogg_int64_t m = LLONG_MIN;
-  for (ogg_uint32_t i=0; i<streams.size(); i++) {
-    ogg_int64_t t = streams[i]->GetEndTime();
-    if (t > m && t > -1) {
-      m = t;
-    }
-  }
-  return m;
-}
-
 void
 SkeletonEncoder::AddBosPacket()
 {
@@ -159,9 +129,9 @@ SkeletonEncoder::AddBosPacket()
   // Allocate packet to return...
   ogg_packet* bos = new ogg_packet();
   memset(bos, 0, sizeof(ogg_packet));
-  bos->packet = new unsigned char[SKELETON_3_2_HEADER_LENGTH];
-  memset(bos->packet, 0, SKELETON_3_2_HEADER_LENGTH);
-  bos->bytes = SKELETON_3_2_HEADER_LENGTH;
+  bos->packet = new unsigned char[SKELETON_4_0_HEADER_LENGTH];
+  memset(bos->packet, 0, SKELETON_4_0_HEADER_LENGTH);
+  bos->bytes = SKELETON_4_0_HEADER_LENGTH;
   bos->b_o_s = 1;
   
   if (mSkeletonDecoder) {
@@ -180,13 +150,6 @@ SkeletonEncoder::AddBosPacket()
   // Set the version fields.
   WriteLEUint16(bos->packet + SKELETON_VERSION_MAJOR_OFFSET, SKELETON_VERSION_MAJOR);
   WriteLEUint16(bos->packet + SKELETON_VERSION_MINOR_OFFSET, SKELETON_VERSION_MINOR);
-  
-  // Write start time and end time.
-  WriteLEInt64(bos->packet + SKELETON_FIRST_NUMER_OFFSET, GetMinStartTime(mDecoders));
-  WriteLEInt64(bos->packet + SKELETON_FIRST_DENOM_OFFSET, 1000);
- 
-  WriteLEInt64(bos->packet + SKELETON_LAST_NUMER_OFFSET, GetMaxEndtime(mDecoders));
-  WriteLEInt64(bos->packet + SKELETON_LAST_DENOM_OFFSET, 1000);
   
   WriteLEUint64(bos->packet + SKELETON_CONTENT_OFFSET, mContentOffset);
 
@@ -329,7 +292,9 @@ SkeletonEncoder::ConstructIndexPackets() {
     double savings = ((double)compressed_size / (double)uncompressed_size) * 100.0;
     cout << sStreamType[mDecoders[i]->Type()] << "/" << mDecoders[i]->GetSerial()
          << " index uses " << uncompressed_size 
-         << " bytes, compresses to " << compressed_size << " (" << savings << "%)" << endl;
+         << " bytes, compresses to " << compressed_size << " (" << savings << "%),"
+         << " duration [" << decoder->GetStartTime() << "," << decoder->GetEndTime() << "] ms"
+         << endl;
 
     packet->bytes = compressed_size;
     unsigned char* p = new unsigned char[compressed_size];
@@ -348,6 +313,13 @@ SkeletonEncoder::ConstructIndexPackets() {
     WriteLEUint64(packet->packet + INDEX_NUM_KEYPOINTS_OFFSET,
                   (ogg_uint64_t)keyframes.size());
     
+    // Write start time and end time.
+    WriteLEInt64(packet->packet + INDEX_FIRST_NUMER_OFFSET, decoder->GetStartTime());
+    WriteLEInt64(packet->packet + INDEX_FIRST_DENOM_OFFSET, 1000);
+
+    WriteLEInt64(packet->packet + INDEX_LAST_NUMER_OFFSET, decoder->GetEndTime());
+    WriteLEInt64(packet->packet + INDEX_LAST_DENOM_OFFSET, 1000);
+
     // Timestamp denominator.
     WriteLEInt64(packet->packet + INDEX_TIME_DENOM_OFFSET, 1000);
 
@@ -593,19 +565,167 @@ SkeletonEncoder::HasFisbonePackets() {
          mSkeletonDecoder->mPackets.size() == mDecoders.size() + 2;
 }
 
+static void ToLower(string& str) {
+  for(unsigned int i=0;i<str.length();i++) {
+    str[i] = tolower(str[i]);
+  }
+}
+
+#define FISBONE_3_0_HEADER_OFFSET 52
+#define FISBONE_4_0_HEADER_OFFSET 56
+
+// Offset of fisbone fields. All field offsets are the same between Skeleton
+// version 3 and version 4, except Radix, which doesn't exist in version 3.
+#define FISBONE_HEADERS_OFFSET_FIELD_OFFSET 8
+#define FISBONE_SERIALNO_OFFSET 12
+#define FISBONE_NUM_HEADERS_OFFSET 16
+#define FISBONE_GRAN_NUMER_OFFSET 20
+#define FISBONE_GRAN_DENOM_OFFSET 28
+#define FISBONE_START_GRAN_OFFSET 36
+#define FISBONE_PREROLL_OFFSET 44
+#define FISBONE_GRAN_SHIFT_OFFSET 48
+#define FISBONE_RADIX_OFFSET 52
+
+Decoder*
+SkeletonEncoder::FindTrack(ogg_uint32_t serialno) {
+  for (unsigned i=0; i<mDecoders.size(); i++) {
+    if (mDecoders[i]->GetSerial() == serialno) {
+      return mDecoders[i];
+    }
+  }
+  return 0;
+}
+
+static bool
+IsFisbonePacket(ogg_packet* packet)
+{
+  return packet->packet &&
+         packet->bytes >= 52 &&
+         memcmp(packet->packet, "fisbone", 8) == 0;
+}
+
+ogg_packet*
+SkeletonEncoder::UpdateFisbone(ogg_packet* original) {
+  assert(IsFisbonePacket(original));
+
+  ogg_uint32_t serialno = LEUint32(original->packet + FISBONE_SERIALNO_OFFSET);
+  Decoder* decoder = FindTrack(serialno);
+  if (!decoder) {
+    cerr << "ERROR: incoming fisbone packet for stream " << serialno << " is unknown" << endl;
+    return 0;
+  }
+  FisboneInfo info = decoder->GetFisboneInfo();
+
+  ogg_uint32_t version = mSkeletonDecoder->GetVersion();
+
+  bool isVersion3x = version >= SKELETON_VERSION(3,0) && 
+                     version < SKELETON_VERSION(4,0);
+
+  int originalHeadersOffset = isVersion3x ? FISBONE_3_0_HEADER_OFFSET
+                                          : FISBONE_4_0_HEADER_OFFSET;
+
+  // Extract the message header fields, ensure we include the all compulsory
+  // fields. These are: Content-Type, Role, Name.
+  const char* x = (const char*)(original->packet + originalHeadersOffset);
+  string header(x, original->bytes - originalHeadersOffset);
+  vector<string> headers;
+  Tokenize(header, headers, "\r\n");
+
+  bool hasContentType = false;
+  bool hasRole = false;
+  bool hasName = false;
+  for (unsigned i=0; i<headers.size(); i++) {
+    string::size_type colon = headers[i].find_first_of(":");
+    if (colon == string::npos) {
+      continue;
+    }
+    string id = headers[i].substr(0, colon);
+    ToLower(id);
+    if (id.compare("content-type") == 0) {
+      hasContentType = true;
+    } else if (id.compare("name") == 0) {
+      hasName = true;
+    } else if (id.compare("role") == 0) {
+      hasRole = true;
+    }
+  }
+
+  unsigned size = original->bytes;
+  if (isVersion3x) {
+    // Version 3.x. We need to add the radix field, and any extra headers.
+    size += 4;
+  }
+
+  if (!hasContentType)
+    size += strlen("Content-Type: ") + info.mContentType.size() + 2;
+  if (!hasName)
+    size += strlen("Name: ") + info.mName.size() + 2;
+  if (!hasRole)
+    size += strlen("Role: ") + info.mRole.size() + 2;
+
+  ogg_packet* packet = new ogg_packet();
+  memcpy(packet, original, sizeof(ogg_packet));
+  packet->packet = new unsigned char[size];
+  packet->bytes = size;
+
+  // Copy stuff up to radix
+  memcpy(packet->packet, original->packet, originalHeadersOffset);
+
+  // Overwrite the message-fields offset; it changes between v 3 and v4.
+  WriteLEUint32(packet->packet + FISBONE_HEADERS_OFFSET_FIELD_OFFSET,
+                FISBONE_4_0_HEADER_OFFSET);
+
+  if (isVersion3x) {
+    // Add the radix.
+    WriteLEUint32(packet->packet + originalHeadersOffset, info.mRadix);
+  }
+
+  unsigned char* h = packet->packet + FISBONE_4_0_HEADER_OFFSET;
+
+  // Write any existing headers.
+  memcpy(h, original->packet+originalHeadersOffset, original->bytes - originalHeadersOffset);
+  h += original->bytes - originalHeadersOffset;
+
+  if (!hasContentType) {
+    // Write a content type...
+    string s = "Content-Type: " + info.mContentType + "\r\n";
+    memcpy(h, s.c_str(), s.size());
+    h += s.size();
+  }
+  if (!hasName) {
+    // Write a name...
+    string s = "Name: " + info.mName + "\r\n";
+    memcpy(h, s.c_str(), s.size());
+    h += s.size();
+  }
+  if (!hasRole) {
+    // Write a role...
+    string s = "Role: " + info.mRole + "\r\n";
+    memcpy(h, s.c_str(), s.size());
+    h += s.size();
+  }
+  assert(h == packet->packet + packet->bytes);
+  return packet;
+}
+
 void
 SkeletonEncoder::AddFisbonePackets() {
   if (HasFisbonePackets()) {
-    // We have fisbone packets from the existing skeleton track. Use them.
+    // We have fisbone packets from the existing skeleton track. Convert to
+    // Skeleton 4.0.
     for (ogg_uint32_t i=1; i<mSkeletonDecoder->mPackets.size()-1; i++) {
-      mIndexPackets.push_back(Clone(mSkeletonDecoder->mPackets[i]));
+      ogg_packet* fisbone = UpdateFisbone(mSkeletonDecoder->mPackets[i]);
+      if (fisbone) {
+        mIndexPackets.push_back(fisbone);
+      }
       mPacketCount++;
     }
   } else {
     // Have to construct fisbone packets.
     for (ogg_uint32_t i=0; i<mDecoders.size(); i++) {
       FisboneInfo info = mDecoders[i]->GetFisboneInfo();
-      unsigned packetSize = FISBONE_BASE_SIZE + (unsigned)info.mContentType.size();
+      string headers = info.MessageHeaders();
+      unsigned packetSize = FISBONE_BASE_SIZE + headers.size();
 
       ogg_packet* packet = new ogg_packet();
       memset(packet, 0, sizeof(ogg_packet));
@@ -617,33 +737,38 @@ SkeletonEncoder::AddFisbonePackets() {
       memcpy(packet->packet, FISBONE_MAGIC, FISBONE_MAGIC_LEN);
       
       // Offset of the message header fields.
-      WriteLEInt32(packet->packet+8, FISBONE_MESSAGE_HEADER_OFFSET);
+      WriteLEInt32(packet->packet+FISBONE_HEADERS_OFFSET_FIELD_OFFSET,
+                   FISBONE_4_0_HEADER_OFFSET);
       
       // Serialno of the stream.
-      WriteLEUint32(packet->packet+12, mDecoders[i]->GetSerial());
-      
+      WriteLEUint32(packet->packet+FISBONE_SERIALNO_OFFSET,
+                    mDecoders[i]->GetSerial());
+
       // Number of header packets. 3 for both vorbis and theora.
-      WriteLEUint32(packet->packet+16, 3);
+      WriteLEUint32(packet->packet+FISBONE_NUM_HEADERS_OFFSET, 3);
       
       // Granulrate numerator.
-      WriteLEInt64(packet->packet+20, info.mGranNumer);
+      WriteLEInt64(packet->packet+FISBONE_GRAN_NUMER_OFFSET, info.mGranNumer);
       
       // Granulrate denominator.
-      WriteLEInt64(packet->packet+28, info.mGranDenom);
+      WriteLEInt64(packet->packet+FISBONE_GRAN_DENOM_OFFSET, info.mGranDenom);
       
       // Start granule.
-      WriteLEInt64(packet->packet+36, 0);
+      WriteLEInt64(packet->packet+FISBONE_START_GRAN_OFFSET, 0);
       
       // Preroll.
-      WriteLEUint32(packet->packet+44, info.mPreroll);
+      WriteLEUint32(packet->packet+FISBONE_PREROLL_OFFSET, info.mPreroll);
       
       // Granule shift.
-      WriteLEUint32(packet->packet+48, info.mGranuleShift);
+      WriteLEUint32(packet->packet+FISBONE_GRAN_SHIFT_OFFSET, info.mGranuleShift);
+
+      // Radix.
+      WriteLEUint32(packet->packet+FISBONE_RADIX_OFFSET, info.mRadix);
 
       // Message header field, Content-Type */
       memcpy(packet->packet+FISBONE_BASE_SIZE,
-             info.mContentType.c_str(),
-             info.mContentType.size());
+             headers.c_str(),
+             headers.size());
 
       packet->b_o_s = 0;
       packet->e_o_s = 0;

@@ -161,4 +161,21 @@ template<class T>
 unsigned char*
 WriteVariableLength(unsigned char* p, const unsigned char* limit, const T n);
 
+
+/*
+Usage:
+
+ vector<string> tokens;
+	 string str("Split,me up!Word2 Word3.");
+	 Tokenize(str, tokens, ",<'> " );
+	 vector <string>::iterator iter;
+	 for(iter = tokens.begin();iter!=tokens.end();iter++){
+	 		cout<< (*iter) << endl;
+	}
+
+*/
+void Tokenize(const string& str,
+              vector<string>& tokens,
+              const string& delimiter);
+
 #endif

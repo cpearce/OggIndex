@@ -85,7 +85,6 @@ protected:
   bool mSetFirstGranulepos;
 
 public:
-
   ogg_int64_t mNextKeyframeThreshold; // in ms
   ogg_int64_t mGranulepos;
 
@@ -397,10 +396,14 @@ public:
     f.mGranDenom = mInfo.fps_denominator;
     f.mPreroll = 0;
     f.mGranuleShift = mInfo.keyframe_granule_shift;
-    f.mContentType = "Content-Type: video/theora\r\n";
-    assert(f.mContentType.size() == 28);
+    f.mRadix = 0;
+    f.mContentType = "video/theora";
+    f.mRole = "video/main";
+    f.mName = "video/main";
     return f;
   }
+
+
 };
 
 class VorbisDecoder : public Decoder {
@@ -546,14 +549,16 @@ public:
     f.mGranDenom = 1;
     f.mPreroll = 2;
     f.mGranuleShift = 0;
-    f.mContentType = "Content-Type: audio/vorbis\r\n";
-    assert(f.mContentType.size() == 28);
+    f.mRadix = 0;
+    f.mContentType = "audio/vorbis";
+    f.mRole = "audio/main";
+    f.mName = "audio/main";
     return f;
   }  
 
 private:
   ogg_int32_t mHeadersRead;
-  
+
   vorbis_info mInfo;
   vorbis_comment mComment;
   vorbis_dsp_state mDsp;
@@ -900,10 +905,13 @@ public:
     f.mGranDenom = mInfo.gps_denominator;
     f.mPreroll = 0;
     f.mGranuleShift = mInfo.granule_shift;
-    f.mContentType = "Content-Type: application/x-kate\r\n";
-    assert(f.mContentType.size() == 34);
+    f.mRadix = 0;
+    f.mContentType = "application/x-kate";
+    f.mName = "text/caption";
+    f.mRole = "text/caption";
     return f;
   }
+
 };
 #endif
 
@@ -976,9 +984,9 @@ bool SkeletonDecoder::Decode(ogg_page* page, ogg_int64_t offset) {
       mVersionMinor = LEUint16(packet.packet + 10);
       mVersion = SKELETON_VERSION(mVersionMajor, mVersionMinor);
       if (mVersion < SKELETON_VERSION(3,0) ||
-          mVersion >= SKELETON_VERSION(4,0)) { 
+          mVersion > SKELETON_VERSION(4,0)) { 
         cerr << "FAIL: Skeleton version " << mVersionMajor << "." << mVersionMinor   
-             << " detected. I can only handle version 3.x" << endl;
+             << " detected. I can only handle version [3.x,4.0]" << endl;
         exit(-1);
       }
     }

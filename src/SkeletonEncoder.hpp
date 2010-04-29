@@ -42,8 +42,8 @@
 #include "Decoder.hpp"
 #include "Utils.hpp"
 
-#define SKELETON_VERSION_MAJOR 3
-#define SKELETON_VERSION_MINOR 3
+#define SKELETON_VERSION_MAJOR 4
+#define SKELETON_VERSION_MINOR 0
 
 class SkeletonEncoder {
 public:
@@ -95,6 +95,11 @@ private:
   void AddFisbonePackets();
   
   bool HasFisbonePackets();
+
+  ogg_packet* UpdateFisbone(ogg_packet* original);
+
+  Decoder* FindTrack(ogg_uint32_t serialno);
+
 };
 
 #endif
