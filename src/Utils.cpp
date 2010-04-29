@@ -257,8 +257,8 @@ IsFisheadPacket(ogg_packet* packet)
 bool
 IsFisbonePacket(ogg_packet* packet)
 {
-  return packet &&
-         packet->bytes > 8 &&
+  return packet->packet &&
+         packet->bytes >= 52 &&
          memcmp(packet->packet, "fisbone", 8) == 0;
 }
 

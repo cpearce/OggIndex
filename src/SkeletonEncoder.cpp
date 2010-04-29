@@ -596,14 +596,6 @@ SkeletonEncoder::FindTrack(ogg_uint32_t serialno) {
   return 0;
 }
 
-static bool
-IsFisbonePacket(ogg_packet* packet)
-{
-  return packet->packet &&
-         packet->bytes >= 52 &&
-         memcmp(packet->packet, "fisbone", 8) == 0;
-}
-
 ogg_packet*
 SkeletonEncoder::UpdateFisbone(ogg_packet* original) {
   assert(IsFisbonePacket(original));
