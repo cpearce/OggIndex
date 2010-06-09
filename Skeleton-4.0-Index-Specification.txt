@@ -1,6 +1,6 @@
 Ogg Skeleton 4.0 with Keyframe Index
 Chris Pearce, Mozilla Corporation
-26 January 2010
+9 June 2010
 
 
 OVERVIEW
@@ -54,28 +54,28 @@ over a network connection.
 For every content stream in an Ogg segment, the Ogg index bitstream 
 provides seek algorithms with an ordered table of "key points". A key 
 point is intrinsically associated with exactly one stream, and stores the
-offset of the page on which it starts, o, as well as the presentation time
-of the keyframe t, as a fraction of seconds. This specifies that in order
-to render the stream at presentation time t, the last page which lies before
-all information required to render the keyframe at presentation time t begins
-exactly at byte offset o, as offset from the beginning of the Ogg segment.
-The offset is exactly the first byte of the page, so if you seek to a
-keypoint's offset and don't find the beginning of a page there, you can
-assume that the Ogg segment has been modified since the index was constructed,
-and that the index is now invalid and should not be used. The time t is the
-keyframe's presentation time corresponding to the granulepos, and is
-represented as a fraction in seconds. Note that if a stream requires any
-preroll, this will be accounted for in the time stored in the keypoint. 
+offset, o, of the last page which lies before all data required to decode
+the keyframe, as well as the presentation time of the keyframe t, as a
+fraction of seconds.
+
+The offset is relative from the beginning of the Ogg segment, and is exactly
+the first byte of the a page in the indexed stream, so if you seek to a
+keypoint's offset and don't find the beginning of a page there, or you find
+a page from another stream, you can assume that the Ogg segment has been
+modified since the index was constructed, and the index can be considered
+invalid. The time t is the keyframe's presentation time corresponding to the
+granulepos, and is represented as a fraction in seconds. Note that if a
+stream requires any preroll, this will be accounted for in the time stored
+in the keypoint. 
 
 The Skeleton 4.0 track contains one index for each content stream in the 
 file. To seek in an Ogg file which contains keyframe indexes, first
 construct the set which contains every active streams' last keypoint which
-has time less than or equal to the seek target time. Then from that set
+has time less than or equal to the seek target time. This tells you a known
+point on every stream which lies before the seek target. Then from that set
 of key points, select the key point with the smallest byte offset. You then
-verify that there's a page found at exactly that offset, and if so, you can
-begin decoding. If the first keyframe you encounter has a time equal to
-that stored in the keypoint, you have made the optimal seek, and can safely
-continue to decode up to the seek target time. You are guaranteed to pass
+verify that there's a page from the keypoint's stream found at exactly that
+offset, and if so, you can begin decoding. You are guaranteed to pass
 keyframes on all streams with time less than or equal to your seek target
 time while decoding up to the seek target. However if you don't encounter
 a keyframe with the same presentation time as is stored in the keypoint,
@@ -122,9 +122,7 @@ correct. You can consider the index invalid if any of the following are true:
    2. after a seek to a keypoint's offset, you don't land exactly on a page
       boundary, or
    3. after a seek to a keypoint's offset, you don't land on a page which
-      belongs to that keypoint's stream, or
-   3. after a seeking to a keypoint's offset, the keyframe doesn't begin on
-      the page stored at offset.
+      belongs to that keypoint's stream.
 
 While loading the Skeleton BOS header, you should always check the Skeleton
 version field to ensure your decoder correctly knows how to parse the Skeleton
@@ -164,11 +162,9 @@ following format:
 14. [NEW] The offset of the first non-header page in bytes: 8 byte unsigned
     integer, 0 if unknown.
 
-In Skeleton 4.0 the "fisbone" packets contain a new 4 byte Radix field
-which occupies bytes 52-55 inclusive. The message header fields begin at
-byte 56, and now include two new compulsory message-header fields "Role"
-and "Name". The fisbone packets still follow after the other streams' BOS
-pages and secondary header pages. 
+In Skeleton 4.0 the "fisbone" packets contain two new compulsory
+message-header fields "Role" and "Name". The fisbone packets still follow
+after the other streams' BOS pages and secondary header pages. 
 
 Before the Skeleton EOS page in the segment header pages come the 
 Skeleton 4.0 keyframe index packets. There should be one index packet for
@@ -190,35 +186,37 @@ stored as two bytes: 0xBD 0x23, or 1011 1101 0010 0011 in binary.
 
 Each index packet contains the following: 
 
-1. Identifier 6 bytes: "index\0"
+1. Identifier 6 bytes: "index\0". Bytes [0...5].
 2. The serialno of the stream this index applies to, as a 4 byte field.
+   Bytes [6...9].
 3. The number of keypoints in this index packet, 'n' as a 8 byte
-   unsigned integer. This can be 0.
-4. First-sample-time numerator: 8 byte signed integer representing
+   unsigned integer. This can be 0. Bytes [10...17].
+4. The timestamp denominator for this stream, as an 8 byte signed
+   integer. All timestamps, including keypoint timestamps, first and
+   last sample timestamps are fractions of seconds over this denominator.
+   This must not be 0. Bytes [18...25].
+5. First-sample-time numerator: 8 byte signed integer representing
    the numerator for the presentation time of the first sample in the track.
-5. First-sample-time denominator: 8 byte signed integer, with value 0
-   if the timestamp is unknown. Decoders should always ensure that the
-   denominator is not 0 before using it as a divisor!
+   Divide this by the timestamp denominator to determine the presentation
+   time of the first sample in seconds. Bytes [26..33].
 6. Last-sample-time numerator: 8 byte signed integer representing the end
-   time of the last sample in the track.
-7. Last-sample-time denominator: 8 byte signed integer, with value 0
-   if the timestamp is unknown. Decoders should always ensure that the
-   denominator is not 0 before using it as a divisor!
-8. The keypoint presentation time denominator, as an 8 byte signed integer.
-9. 'n' key points, each of which contain, in the following order:
+   time of the last sample in the track. Divide this by the timestamp
+   denominator to determine the end time of the last sample in seconds.
+   Bytes [34..41].
+7. 'n' key points, each of which contain, in the following order:
     - the keyframe's page's byte offset delta, as a variable byte encoded
       integer. This is the number of bytes that this keypoint is after the
       preceeding keypoint's offset, or from the start of the segment if this
       is the first keypoint. The keypoint's page start is therefore the sum
       of the byte-offset-deltas of all the keypoints which come before it.
-    - the presentation time numerator delta, of the first key frame which
-      starts on the page at the keypoint's offset, as a variable byte encoded
-      integer. This is the difference from the previous keypoint's timestamp
-      numerator. The keypoint's timestamp numerator is therefore the sum of
-      all the timestamp numerator deltas up to and including the keypoint's.
-      Divide the timestamp numerator sum by the timestamp denominator stored
-      earlier in the index packet to determine the presentation time of the
-      keyframe in seconds.
+    - the presentation time numerator delta, of a key frame which starts on
+      or shortly after the page at the keypoint's offset, as a variable byte
+      encoded integer. This is the difference from the previous keypoint's
+      timestamp numerator. The keypoint's timestamp numerator is therefore
+      the sum of all the timestamp numerator deltas up to and including the
+      keypoint's. Divide the timestamp numerator sum by the timestamp
+      denominator stored earlier in the index packet to determine the
+      presentation time of the keyframe in seconds.
 
 The key points are stored in increasing order by offset (and thus by 
 presentation time as well).
@@ -230,11 +228,6 @@ are relative to the beginning of the second Ogg in the chain, not the first.
 Also note that if a physical Ogg bitstream is made up of chained Oggs, the
 presence of an index in one segment does not imply that there will be an
 index in any other segment. 
-
-The first-sample-time and last-sample-time are rational numbers, in units
-of seconds. If the denominator is 0 for the first-sample-time or the
-last-sample-time, then that value was unable to be determined at indexing
-time, and is unknown.
 
 The exact number of keyframes used to construct key points in the index 
 is up to the indexer, but to limit the index size, we recommend 

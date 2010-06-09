@@ -89,7 +89,7 @@ bool Options::GetDumpPages() {
 void Options::PrintHelp() {
   cout
     << "OggIndex " << VERSION << " (Skeleton " << SKELETON_VERSION_MAJOR
-    << "." << SKELETON_VERSION_MAJOR << ")" << endl
+    << "." << SKELETON_VERSION_MINOR << ")" << endl
     << endl
     << "Indexes an Ogg file to provide allow faster seeking." << endl
     << endl

@@ -501,7 +501,7 @@ public:
         ogg_uint16_t ver_maj = LEUint16(op.packet + SKELETON_VERSION_MAJOR_OFFSET);
         ogg_uint16_t ver_min = LEUint16(op.packet + SKELETON_VERSION_MINOR_OFFSET);
         ogg_uint32_t version = SKELETON_VERSION(ver_maj, ver_min);
-        if (version != SKELETON_VERSION(4,0)) { 
+        if (version != SKELETON_VERSION(SKELETON_VERSION_MAJOR,SKELETON_VERSION_MINOR)) { 
           cerr << "FAIL: Skeleton version " << ver_maj << "." <<ver_min   
                << " detected. I can only validate version "
                << SKELETON_VERSION_MAJOR << "." << SKELETON_VERSION_MINOR << endl;
