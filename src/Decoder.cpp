@@ -399,10 +399,9 @@ public:
     f.mRadix = 0;
     f.mContentType = "video/theora";
     f.mRole = "video/main";
-    f.mName = "video/main";
+    f.mName = "video_1";
     return f;
   }
-
 
 };
 
@@ -552,7 +551,7 @@ public:
     f.mRadix = 0;
     f.mContentType = "audio/vorbis";
     f.mRole = "audio/main";
-    f.mName = "audio/main";
+    f.mName = "audio_1";
     return f;
   }  
 
