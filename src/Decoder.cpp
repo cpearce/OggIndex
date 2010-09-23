@@ -544,7 +544,7 @@ public:
 
   virtual FisboneInfo GetFisboneInfo() {
     FisboneInfo f;
-    f.mGranNumer = mInfo.channels * mInfo.rate;
+    f.mGranNumer = mInfo.rate;
     f.mGranDenom = 1;
     f.mPreroll = 2;
     f.mGranuleShift = 0;
