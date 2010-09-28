@@ -307,9 +307,27 @@ public:
             assert(frame > 0 || !TheoraVersion(&mInfo,3,2,1));
             granulepos = frame << shift;
           } else {
-            // We must be offset by more than 1 frame for this to work.
-            assert((prev_granulepos & ((1 << shift) - 1)) > 0);
-            granulepos = prev_granulepos - 1;
+            if (mFrames[i+1].is_keyframe) {
+              // The successor frame is a keyframe, so we can't just subtract 1
+              // from the "keyframe offset" part of its granulepos, as it
+              // doesn't have one! So fake it, take the keyframe offset as the
+              // max possible keyframe offset. This means the granulepos (probably)
+              // overshoots and claims that it depends on a frame before its actual
+              // keyframe but at least its granule number will be correct, so the
+              // times we calculate from this granulepos will also be correct.
+              ogg_int64_t frameno = th_granule_frame(mCtx, prev_granulepos);
+              ogg_int64_t max_offset = min((frameno - 1),
+                                           (ogg_int64_t)(1 << shift) - 1);
+              ogg_int64_t granule = frameno +
+                                    TheoraVersion(&mInfo,3,2,1) -
+                                    1 - max_offset;
+              assert(granule > 0, "Must have positive granulepos");
+              granulepos = (granule << shift) + max_offset;
+            } else {
+              // We must be offset by more than 1 frame for this to work.
+              assert((prev_granulepos & ((1 << shift) - 1)) > 0);
+              granulepos = prev_granulepos - 1;
+            }
           }
           // This frame's granule number should be one less than the previous.
           assert(th_granule_frame(mCtx, granulepos) ==
