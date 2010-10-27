@@ -8,7 +8,7 @@ BUILDING ON LINUX
 To build on Linux you require the ogg, theora and vorbis libraries to be 
 installed. Provided those libraries are installed, building the indexer
 should be as simple as running "build-indexer.sh". To build the validator
-run "build-validtor.sh". If you have libkate installed, it will 
+run "build-validator.sh". If you have libkate installed, it will 
 automatically build with kate support.
 
 BUILDING ON WINDOWS
