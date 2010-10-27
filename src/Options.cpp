@@ -91,7 +91,7 @@ void Options::PrintHelp() {
     << "OggIndex " << VERSION << " (Skeleton " << SKELETON_VERSION_MAJOR
     << "." << SKELETON_VERSION_MINOR << ")" << endl
     << endl
-    << "Indexes an Ogg file to provide allow faster seeking." << endl
+    << "Indexes an Ogg file to enable faster seeking." << endl
     << endl
     << "Usage:" << endl
     << "  OggIndex [-i <interval> -v -d -k -p -m -o <out filename>] <in filename>" << endl
