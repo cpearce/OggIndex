@@ -321,7 +321,7 @@ public:
               ogg_int64_t granule = frameno +
                                     TheoraVersion(&mInfo,3,2,1) -
                                     1 - max_offset;
-              assert(granule > 0, "Must have positive granulepos");
+              assert(granule > 0); // We must have positive granulepos...
               granulepos = (granule << shift) + max_offset;
             } else {
               // We must be offset by more than 1 frame for this to work.
