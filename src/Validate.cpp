@@ -96,7 +96,6 @@ private:
   th_dec_ctx* mCtx;
   int mHeaderPacketsRead;
   ogg_int64_t mFrameDuration;
-  ogg_int64_t mGranulepos;
 
   ogg_int64_t Time(ogg_int64_t granulepos) {
     ogg_int64_t frame_index = th_granule_frame(mCtx, granulepos);
@@ -132,7 +131,6 @@ public:
     : VerifyDecoder(serial)
     , mSetup(0)
     , mHeaderPacketsRead(0)
-    , mGranulepos(-1)
   {
     th_info_init(&mInfo);
     th_comment_init(&mComment);
@@ -146,7 +144,6 @@ public:
   virtual void Reset() {
     mBuffer.clear(); 
     ogg_stream_reset(&mStreamState);
-    mGranulepos = -1;
   }
   
   virtual const char* Type() { return "Theora"; }
@@ -160,17 +157,9 @@ public:
     }
     ogg_int64_t start_time = INT_MAX;
 
-    if (mGranulepos == -1 &&
-        ogg_page_granulepos(page) != -1 &&
-        ogg_page_packets(page) == 1 &&
-        ogg_page_continued(page))
-    {
-      mGranulepos = ogg_page_granulepos(page);
-    }
-
     assert(AllBufferedGranuleposInvalid());
 
-    int shift = mInfo.keyframe_granule_shift;
+    const int shift = mInfo.keyframe_granule_shift;
     ogg_packet op;
     int ret = ogg_stream_pagein(&mStreamState, page);
     assert(ret == 0);
@@ -203,19 +192,6 @@ public:
       p.granulepos = op.granulepos;
       p.isKeyFrame = th_packet_iskeyframe(&op) != 0;
 
-      // If we know the previous granulepos, we can just increment that.
-      if (p.granulepos == -1 && mGranulepos != -1) {
-        // Packets granulepos is the previous known granulepos incremented.
-        if (p.isKeyFrame) {
-          p.granulepos =
-            (th_granule_frame(mCtx, mGranulepos) + 1 + TheoraVersion(&mInfo,3,2,1)) << shift;
-        } else {
-          p.granulepos = mGranulepos + 1;
-        }
-        assert(th_granule_frame(mCtx, mGranulepos) + 1 ==
-               th_granule_frame(mCtx, p.granulepos));
-        
-      }
       mBuffer.push_back(p);
 
       if (p.granulepos == -1) {
@@ -226,7 +202,6 @@ public:
 
       // We've got buffered packets, and the last one has a known
       // granulepos. Use its granulepos to calculate the other granulepos.          
-      mGranulepos = p.granulepos;
       list<PacketInfo>::reverse_iterator rev_itr = mBuffer.rbegin();
       PacketInfo *prev = &(*rev_itr);
       rev_itr++;
@@ -253,6 +228,7 @@ public:
             assert(granule > 0);
             granulepos = (granule << shift) + max_offset;
           } else {
+            assert((prev->granulepos & ((1 << shift) - 1)) > 0);
             granulepos = prev->granulepos - 1;
           }
         }

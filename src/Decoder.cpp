@@ -86,7 +86,6 @@ protected:
 
 public:
   ogg_int64_t mNextKeyframeThreshold; // in ms
-  ogg_int64_t mGranulepos;
 
   // Records the packetno of the first complete non-header packet in the stream.
   ogg_int64_t mFirstPacketno;
@@ -99,7 +98,6 @@ public:
     mPacketCount(0),
     mSetFirstGranulepos(false),
     mNextKeyframeThreshold(-INT_MAX),
-    mGranulepos(-1),
     mFirstPacketno(-1)
   {
     th_info_init(&mInfo);
@@ -234,6 +232,7 @@ public:
 
     ogg_packet packet;
     int num_packets = 0;
+    vector<Frame> frames;
     while ((ret = ogg_stream_packetout(&mState, &packet)) != 0) {
       if (ret == -1) {
         cerr << "WARNING: Lost sync decoding packets on theora page "
@@ -273,117 +272,88 @@ public:
         mFirstPacketno = packet.packetno;
       }
       
-      int shift = mInfo.keyframe_granule_shift;
-      if (mGranulepos == -1) {
+      const int shift = mInfo.keyframe_granule_shift;
+
+      // Packet should only have a granulepos if the page does.
+      assert(page_granulepos != -1 || packet.granulepos == -1);
+      assert(packet.granulepos == -1 || packet.granulepos == page_granulepos);
       
-        // Packet should only have a granulepos if the page does.
-        assert(page_granulepos != -1 || packet.granulepos == -1);
-        assert(packet.granulepos == -1 || packet.granulepos == page_granulepos);
-      
-        // We've not yet determined the granulepos of the first (or previous)
-        // packet. Remember the packet, even if it's not a keyframe so that
-        // we can backtrack to get all packets' start time.
-        mFrames.push_back(Frame(packet));
+      // We've not yet determined the granulepos of the first (or previous)
+      // packet. Remember the packet, even if it's not a keyframe so that
+      // we can backtrack to get all packets' start time.
+      frames.push_back(Frame(packet));
 
-        if (packet.granulepos == -1) {
-          // We've stored the packet, once we find one with a non -1 granulepos
-          // we can find the first packet's granulepos.
-          continue;
-        }
-        
-        // We know a packet's granulepos, use it to tag the packets buffered
-        // before it so that they have valid granulepos.
-        for (int i=(int)mFrames.size()-2; i>=0; i--) {
-          ogg_int64_t prev_granulepos = mFrames[i+1].granulepos;
-          assert(prev_granulepos != -1);
-          ogg_int64_t granulepos = -1;
-          if (mFrames[i].is_keyframe) {
-            ogg_int64_t frame = th_granule_frame(mCtx, prev_granulepos) +
-                                TheoraVersion(&mInfo,3,2,1) - 1;
-            // 3.2.0 streams store the frame index in the granule position.
-            // 3.2.1 and later store the frame count. th_granule_frame() returns
-            // the frame index, so |frame| can be 0 when we're theora version
-            // 3.2.0 or less.
-            assert(frame > 0 || !TheoraVersion(&mInfo,3,2,1));
-            granulepos = frame << shift;
-          } else {
-            if (mFrames[i+1].is_keyframe) {
-              // The successor frame is a keyframe, so we can't just subtract 1
-              // from the "keyframe offset" part of its granulepos, as it
-              // doesn't have one! So fake it, take the keyframe offset as the
-              // max possible keyframe offset. This means the granulepos (probably)
-              // overshoots and claims that it depends on a frame before its actual
-              // keyframe but at least its granule number will be correct, so the
-              // times we calculate from this granulepos will also be correct.
-              ogg_int64_t frameno = th_granule_frame(mCtx, prev_granulepos);
-              ogg_int64_t max_offset = min((frameno - 1),
-                                           (ogg_int64_t)(1 << shift) - 1);
-              ogg_int64_t granule = frameno +
-                                    TheoraVersion(&mInfo,3,2,1) -
-                                    1 - max_offset;
-              assert(granule > 0); // We must have positive granulepos...
-              granulepos = (granule << shift) + max_offset;
-            } else {
-              // We must be offset by more than 1 frame for this to work.
-              assert((prev_granulepos & ((1 << shift) - 1)) > 0);
-              granulepos = prev_granulepos - 1;
-            }
-          }
-          // This frame's granule number should be one less than the previous.
-          assert(th_granule_frame(mCtx, granulepos) ==
-                 th_granule_frame(mCtx, prev_granulepos) - 1);
-          mFrames[i].granulepos = granulepos;
-        }
-        // Now all packets have a known time.
-        assert(mStartTime == -1);
-        mStartTime = StartTime(mFrames.front().granulepos);
-        assert(mStartTime >= 0);
-        mEndTime = EndTime(mFrames.back().granulepos);
-        assert(mEndTime >= mStartTime);
-
-        // Print/log packets before we remove non-keyframe packets.
-        for (unsigned i=0; i<mFrames.size(); i++) {
-          DumpPacket(mFrames[i]);
-        }
-
-        // Remove the frames that aren't keyframes.
-        for (unsigned i=0; i<mFrames.size(); i++) {
-          if (!mFrames[i].is_keyframe) {
-            mFrames.erase(mFrames.begin()+i);
-            i--;
-            continue;
-          }
-          assert(mFrames[i].is_keyframe);
-        }
-        mGranulepos = packet.granulepos;
+      if (packet.granulepos == -1) {
+        // We've stored the packet, once we find one with a non -1 granulepos
+        // we can find the first packet's granulepos.
         continue;
       }
+        
+      // We know a packet's granulepos, use it to tag the packets buffered
+      // before it so that they have valid granulepos.
+      for (int i=(int)frames.size()-2; i>=0; i--) {
+        ogg_int64_t prev_granulepos = frames[i+1].granulepos;
+        assert(prev_granulepos != -1);
+        ogg_int64_t granulepos = -1;
+        if (frames[i].is_keyframe) {
+          ogg_int64_t frame = th_granule_frame(mCtx, prev_granulepos) +
+                              TheoraVersion(&mInfo,3,2,1) - 1;
+          // 3.2.0 streams store the frame index in the granule position.
+          // 3.2.1 and later store the frame count. th_granule_frame() returns
+          // the frame index, so |frame| can be 0 when we're theora version
+          // 3.2.0 or less.
+          assert(frame > 0 || !TheoraVersion(&mInfo,3,2,1));
+          granulepos = frame << shift;
+        } else {
+          if (frames[i+1].is_keyframe) {
+            // The successor frame is a keyframe, so we can't just subtract 1
+            // from the "keyframe offset" part of its granulepos, as it
+            // doesn't have one! So fake it, take the keyframe offset as the
+            // max possible keyframe offset. This means the granulepos (probably)
+            // overshoots and claims that it depends on a frame before its actual
+            // keyframe but at least its granule number will be correct, so the
+            // times we calculate from this granulepos will also be correct.
+            ogg_int64_t frameno = th_granule_frame(mCtx, prev_granulepos);
+            ogg_int64_t max_offset = min((frameno - 1),
+                                          (ogg_int64_t)(1 << shift) - 1);
+            ogg_int64_t granule = frameno +
+                                  TheoraVersion(&mInfo,3,2,1) -
+                                  1 - max_offset;
+            assert(granule > 0); // We must have positive granulepos...
+            granulepos = (granule << shift) + max_offset;
+          } else {
+            // We must be offset by more than 1 frame for this to work.
+            assert((prev_granulepos & ((1 << shift) - 1)) > 0);
+            granulepos = prev_granulepos - 1;
+          }
+        }
+        // This frame's granule number should be one less than the previous.
+        assert(th_granule_frame(mCtx, granulepos) ==
+                th_granule_frame(mCtx, prev_granulepos) - 1);
+        frames[i].granulepos = granulepos;
+      }
+      // Now all packets have a known time.
+      if (mStartTime == -1) {
+        mStartTime = StartTime(frames.front().granulepos);
+      }
+      assert(mStartTime >= 0);
+      mEndTime = EndTime(frames.back().granulepos);
+      assert(mEndTime >= mStartTime);
 
-      // mGranulepos != -1. We know the previous packet's granulepos.
-      // This packet's granulepos is the previous one's incremented.
-      ogg_int64_t granulepos = 0;
-      bool is_keyframe = th_packet_iskeyframe(&packet) != 0;
-      if (is_keyframe) {
-        granulepos = (th_granule_frame(mCtx, mGranulepos) + 1 +
-                      TheoraVersion(&mInfo,3,2,1)) << shift;
-      } else {
-        granulepos = mGranulepos + 1;
-        ogg_int64_t max_offset = (1 << shift) - 1;
-        assert((mGranulepos & max_offset) + 1 <= max_offset);
+      // Print/log packets before we remove non-keyframe packets.
+      for (unsigned i=0; i<frames.size(); i++) {
+        DumpPacket(frames[i]);
       }
-      assert(th_granule_frame(mCtx, mGranulepos) + 1 ==
-             th_granule_frame(mCtx, granulepos));
-      assert(packet.granulepos == -1 || packet.granulepos == granulepos);
-      packet.granulepos = granulepos;
-      mGranulepos = granulepos;
-      
-      Frame f(packet);
-      DumpPacket(f);
-      if (is_keyframe) {
-        mFrames.push_back(f);
+
+      // Add keyframes to the final frame list.
+      for (unsigned i=0; i<frames.size(); i++) {
+        if (frames[i].is_keyframe) {
+          mFrames.push_back(frames[i]);
+        }
       }
-      mEndTime = EndTime(mGranulepos);
-    } // end while packetout.
+    } // end while packetout
+
+
     if (num_packets != ogg_page_packets(page)) {
       cerr << "WARNING: Fewer packets finished on theora page "
            << mPages.size() << " than expected." << endl;
