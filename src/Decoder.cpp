@@ -82,8 +82,6 @@ protected:
   ogg_int32_t mHeadersRead;
   ogg_int64_t mPacketCount; 
 
-  bool mSetFirstGranulepos;
-
 public:
   ogg_int64_t mNextKeyframeThreshold; // in ms
 
@@ -96,7 +94,6 @@ public:
     mCtx(0),
     mHeadersRead(0),
     mPacketCount(0),
-    mSetFirstGranulepos(false),
     mNextKeyframeThreshold(-INT_MAX),
     mFirstPacketno(-1)
   {
