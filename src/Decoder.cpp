@@ -181,6 +181,7 @@ public:
 
       KeyFrameInfo k(mPages[pageno].offset,
                      StartTime(frame.granulepos));
+      assert(k.mTime >= 0);
 
       // Only add the keyframe to the list if it's far enough after the
       // previous keyframe.
@@ -396,7 +397,8 @@ public:
   VorbisDecoder(ogg_uint32_t serial) :
     Decoder(serial),
     mNextKeyframeThreshold(-INT_MAX),
-    mHeadersRead(0)
+    mHeadersRead(0),
+    mGotFirstContentPage(false)
   {
     vorbis_info_init(&mInfo);
     vorbis_comment_init(&mComment);    
@@ -410,6 +412,8 @@ public:
   ogg_int64_t mNextKeyframeThreshold; // in ms
 
   vector<KeyFrameInfo> mKeyFrames;
+
+  bool mGotFirstContentPage;
 
   virtual const vector<KeyFrameInfo>& GetKeyframes() {
     return mKeyFrames;
@@ -489,7 +493,17 @@ public:
         assert(packet.granulepos == ogg_page_granulepos(page));
         ogg_int64_t start_granule = packet.granulepos - total_samples;
         start_time = Time(start_granule);
+        if (!mGotFirstContentPage && start_time < 0) {
+          // The first content page may specify fewer samples in its granulepos
+          // than are actually in the the first page. As per the vorbis spec,
+          // these should not be played, so we exclude them here.
+          start_time = 0;
+        }
         ogg_int64_t end_time = Time(packet.granulepos);
+
+        mGotFirstContentPage = true;
+
+
         // First packet will be included in the index, the cut off threshold
         // is then set relative to that.
 
@@ -501,6 +515,7 @@ public:
                << endl;
         }    
 
+        assert(start_time >= 0);
         if (start_time > mNextKeyframeThreshold) {
           mKeyFrames.push_back(KeyFrameInfo(offset, start_time));
           mNextKeyframeThreshold = Time(ogg_page_granulepos(page)) +
@@ -512,6 +527,7 @@ public:
           mStartTime = start_time;
         }
         mEndTime = end_time;
+
       }
     } // while packetout
 

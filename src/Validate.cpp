@@ -326,7 +326,8 @@ public:
       assert(start_time == -1);
       if (op.granulepos != -1) {
         assert(op.granulepos == ogg_page_granulepos(page));
-        ogg_int64_t start_granule = op.granulepos - total_samples;
+        ogg_int64_t start_granule =
+          (total_samples < op.granulepos) ? (op.granulepos - total_samples) : 0;
         start_time = (1000 * start_granule) / mDsp.vi->rate;
         end_time = (1000 * ogg_page_granulepos(page)) / mDsp.vi->rate;
       }
