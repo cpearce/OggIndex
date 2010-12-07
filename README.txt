@@ -22,4 +22,4 @@ the OggIndex project to build the indexer, and OggIndexValid to build
 the validator.
 
 You can disable Kate support by removing the HAVE_KATE preprocessor
-definjtions from the OggIndex and OggIndexValid's project properties.
+definitions from the OggIndex and OggIndexValid's project properties.
