@@ -48,9 +48,9 @@ clean:
 	rm -rf $(OBJS) $(INDEXER) $(VALIDATOR) *.dSYM $(INDEXER)-*.tar.gz
 	rm -f *.gcov *.gcda *.gcno
 
-install: $(PROG)
+install: $(INDEXER) $(VALIDATOR)
 	install -d $(INSTALL_PREFIX)/bin
-	install $(PROG) $(INSTALL_PREFIX)/bin
+	install $^ $(INSTALL_PREFIX)/bin
 
 tags:
 	ctags -R .
