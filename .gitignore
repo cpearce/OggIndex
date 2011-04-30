@@ -1,0 +1,11 @@
+*.dSYM
+*.gcda
+*.gcno
+*.gcov
+*.o
+.*.swp
+.DS_Store
+OggIndex
+OggIndexValid
+Session.vim
+tags
