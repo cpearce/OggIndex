@@ -167,13 +167,13 @@ public:
       Frame& frame = mFrames[f];
       ogg_int64_t packetno = frame.packetno;
 
-      while (pageno < mPages.size() &&
+      while (pageno < (ogg_int64_t) mPages.size() &&
              started_packetno + mPages[pageno].num_packets < packetno)
       {
         started_packetno += mPages[pageno].num_packets;
         pageno++;  
       } // pages
-      assert(pageno < mPages.size());
+      assert(pageno < (ogg_int64_t) mPages.size());
       assert(started_packetno < packetno &&
              started_packetno + mPages[pageno].num_packets >= packetno);
 
