@@ -191,7 +191,7 @@ IsPageAtOffset(const string& filename, ogg_int64_t offset, ogg_page* page)
 {
   ifstream file(filename.c_str(), ios::in | ios::binary);
   assert(file);
-  file.seekg((ogg_int32_t)offset, ios_base::beg);
+  file.seekg((std::streamoff)offset, ios_base::beg);
   char* buf = new char[max(page->body_len, page->header_len)];
   file.read(buf, page->header_len);
   assert(file.gcount() == page->header_len);
