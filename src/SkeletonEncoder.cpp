@@ -602,11 +602,6 @@ SkeletonEncoder::UpdateFisbone(ogg_packet* original) {
   }
   FisboneInfo info = decoder->GetFisboneInfo();
 
-  ogg_uint32_t version = mSkeletonDecoder->GetVersion();
-
-  bool isVersion3x = version >= SKELETON_VERSION(3,0) && 
-                     version < SKELETON_VERSION(4,0);
-
   // Extract the message header fields, ensure we include the all compulsory
   // fields. These are: Content-Type, Role, Name.
   const char* x = (const char*)(original->packet + FISBONE_HEADER_OFFSET);
