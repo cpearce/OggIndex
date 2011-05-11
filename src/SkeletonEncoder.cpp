@@ -380,8 +380,8 @@ SkeletonEncoder::ConstructPages() {
   assert(ret != 0);
   AppendPage(page);
 
-  // Normal skeleton header packets...
-  for (ogg_uint32_t i=1; i<mIndexPackets.size(); i++) {
+  // Output non-eos packets.
+  for (ogg_uint32_t i=1; i<mIndexPackets.size()-1; i++) {
     ret = ogg_stream_packetin(&state, mIndexPackets[i]);
     assert(ret == 0);
   }
@@ -395,9 +395,16 @@ SkeletonEncoder::ConstructPages() {
   if (ret != 0) {
     AppendPage(page);
   }
-   
-  ogg_stream_clear(&state); 
 
+  // Output the eos page. It must be on its own page.
+  ret = ogg_stream_packetin(&state, mIndexPackets.back());
+  assert(ret == 0);
+  ret = ogg_stream_flush(&state, &page);
+  if (ret != 0) {
+    AppendPage(page);
+  }
+
+  ogg_stream_clear(&state);
 }
 
 void
